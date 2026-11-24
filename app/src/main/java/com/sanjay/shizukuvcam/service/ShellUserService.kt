@@ -53,7 +53,6 @@ class ShellUserService : IShellService.Stub() {
             } catch (_: Throwable) {
             }
 
-            // Mirror to /storage/emulated/0/DCIM/Camera1 for apps blocked from /data/local/tmp
             try {
                 val pubDir = File(PUBLIC_DIR_PATH)
                 if (!pubDir.exists()) pubDir.mkdirs()
@@ -122,8 +121,6 @@ class ShellUserService : IShellService.Stub() {
             return "ERR: Invalid package name"
         }
         return try {
-            // Copy video + state directly into target app's own external files dir
-            // (Readable by the target app with zero extra permissions and no SELinux denial)
             val targetDir = File("/storage/emulated/0/Android/data/$packageName/files")
             if (!targetDir.exists()) targetDir.mkdirs()
 
@@ -139,7 +136,6 @@ class ShellUserService : IShellService.Stub() {
             val enabledText = if (isVirtualCamEnabled()) "1" else "0"
             File(targetDir, "vcam_enabled").writeText(enabledText)
 
-            // Best-effort storage permission grant + force-stop
             runCommand("pm grant $packageName android.permission.READ_MEDIA_VIDEO")
             runCommand("pm grant $packageName android.permission.READ_EXTERNAL_STORAGE")
             runCommand("am force-stop $packageName")

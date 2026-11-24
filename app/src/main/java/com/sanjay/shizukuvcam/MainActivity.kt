@@ -220,10 +220,11 @@ class MainActivity : AppCompatActivity() {
 
         targetApps = installed.ifEmpty {
             listOf(
+                "Brave (com.brave.browser)" to "com.brave.browser",
+                "Google Chrome (com.android.chrome)" to "com.android.chrome",
                 "WhatsApp (com.whatsapp)" to "com.whatsapp",
                 "Instagram (com.instagram.android)" to "com.instagram.android",
-                "Telegram (org.telegram.messenger)" to "org.telegram.messenger",
-                "Google Chrome (com.android.chrome)" to "com.android.chrome"
+                "Telegram (org.telegram.messenger)" to "org.telegram.messenger"
             )
         }
 

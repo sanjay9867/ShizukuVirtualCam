@@ -22,7 +22,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Shizuku-powered Rootless Virtual Camera (Camera1 &amp; Camera2)" />
+            android:value="Shizuku-powered Rootless Virtual Camera (Camera1, Camera2 &amp; Chromium Browsers)" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
