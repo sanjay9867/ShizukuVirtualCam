@@ -44,6 +44,9 @@ class VirtualCamHook : IXposedHookLoadPackage {
         private val dummyTextures = ArrayList<SurfaceTexture>()
         private val imageReaderFormats = WeakHashMap<Surface, Int>()
         private val hookedImageClasses = ConcurrentHashMap<Class<*>, Boolean>()
+        private val hookedPlaneClasses = ConcurrentHashMap<Class<*>, Boolean>()
+        private val planeOverrides: MutableMap<Any, PlaneOverride> =
+            Collections.synchronizedMap(WeakHashMap<Any, PlaneOverride>())
 
         private var activePlayer: MediaPlayer? = null
         private var yuvDecoder: YuvVideoDecoder? = null
@@ -228,14 +231,69 @@ class VirtualCamHook : IXposedHookLoadPackage {
             }
         }
 
-        fun buildVirtualPlanes(dstW: Int, dstH: Int, packageName: String): Array<Image.Plane>? {
-            if (dstW <= 0 || dstH <= 0) return null
-            val videoPath = getActiveVideoPath(packageName) ?: return null
+        fun ensurePlaneClassHooked(planeClass: Class<*>) {
+            if (hookedPlaneClasses.putIfAbsent(planeClass, true) != null) return
+            try {
+                XposedBridge.hookMethod(
+                    planeClass.getMethod("getBuffer"),
+                    object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            val target = param.thisObject ?: return
+                            val ov = planeOverrides[target] ?: return
+                            param.result = ov.buffer.duplicate().apply { rewind() }
+                        }
+                    }
+                )
+                XposedBridge.hookMethod(
+                    planeClass.getMethod("getRowStride"),
+                    object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            val target = param.thisObject ?: return
+                            val ov = planeOverrides[target] ?: return
+                            param.result = ov.rowStride
+                        }
+                    }
+                )
+                XposedBridge.hookMethod(
+                    planeClass.getMethod("getPixelStride"),
+                    object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            val target = param.thisObject ?: return
+                            val ov = planeOverrides[target] ?: return
+                            param.result = ov.pixelStride
+                        }
+                    }
+                )
+                XposedBridge.log("$TAG: Hooked Image.Plane class ${planeClass.name}")
+            } catch (t: Throwable) {
+                XposedBridge.log("$TAG: Failed to hook Image.Plane class ${planeClass.name}: ${t.message}")
+            }
+        }
+
+        fun applyVirtualPlanes(
+            realPlanes: Array<Image.Plane>,
+            dstW: Int,
+            dstH: Int,
+            packageName: String
+        ) {
+            if (realPlanes.size < 3 || dstW <= 0 || dstH <= 0) return
+            val videoPath = getActiveVideoPath(packageName)
+            if (videoPath == null) {
+                planeOverrides.remove(realPlanes[0])
+                planeOverrides.remove(realPlanes[1])
+                planeOverrides.remove(realPlanes[2])
+                return
+            }
+
             ensureYuvDecoderRunning(videoPath)
             showToastOnce("ShizukuVCam: Active (YUV Frame Injection)")
 
             val rotation = getRotationDegrees(packageName)
             val frame = yuvDecoder?.latestFrame
+
+            val yOv: PlaneOverride
+            val uOv: PlaneOverride
+            val vOv: PlaneOverride
 
             synchronized(lock) {
                 val idx = slotIndex
@@ -252,24 +310,25 @@ class VirtualCamHook : IXposedHookLoadPackage {
                     slot.fillFromFrame(frame, rotation)
                 }
 
-                return arrayOf(
-                    VirtualPlane(slot.yBuf.duplicate().apply { rewind() }, dstW, 1),
-                    VirtualPlane(slot.uBuf.duplicate().apply { rewind() }, slot.cw, 1),
-                    VirtualPlane(slot.vBuf.duplicate().apply { rewind() }, slot.cw, 1)
-                )
+                yOv = PlaneOverride(slot.yBuf.duplicate().apply { rewind() }, dstW, 1)
+                uOv = PlaneOverride(slot.uBuf.duplicate().apply { rewind() }, slot.cw, 1)
+                vOv = PlaneOverride(slot.vBuf.duplicate().apply { rewind() }, slot.cw, 1)
             }
+
+            ensurePlaneClassHooked(realPlanes[0].javaClass)
+            ensurePlaneClassHooked(realPlanes[1].javaClass)
+            ensurePlaneClassHooked(realPlanes[2].javaClass)
+            planeOverrides[realPlanes[0]] = yOv
+            planeOverrides[realPlanes[1]] = uOv
+            planeOverrides[realPlanes[2]] = vOv
         }
     }
 
-    private class VirtualPlane(
-        private val buffer: ByteBuffer,
-        private val rowStride: Int,
-        private val pixelStride: Int
-    ) : Image.Plane() {
-        override fun getRowStride(): Int = rowStride
-        override fun getPixelStride(): Int = pixelStride
-        override fun getBuffer(): ByteBuffer = buffer
-    }
+    private class PlaneOverride(
+        val buffer: ByteBuffer,
+        val rowStride: Int,
+        val pixelStride: Int
+    )
 
     private class YuvFrame(
         val width: Int,
@@ -585,17 +644,15 @@ class VirtualCamHook : IXposedHookLoadPackage {
     private fun ensureImageClassHooked(imageClass: Class<*>, packageName: String) {
         if (hookedImageClasses.putIfAbsent(imageClass, true) != null) return
         try {
-            XposedHelpers.findAndHookMethod(
-                imageClass,
-                "getPlanes",
+            XposedBridge.hookMethod(
+                imageClass.getMethod("getPlanes"),
                 object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
+                    override fun afterHookedMethod(param: MethodHookParam) {
                         val image = param.thisObject as? Image ?: return
                         if (image.format != ImageFormat.YUV_420_888) return
-                        val virtualPlanes = buildVirtualPlanes(image.width, image.height, packageName)
-                        if (virtualPlanes != null) {
-                            param.result = virtualPlanes
-                        }
+                        @Suppress("UNCHECKED_CAST")
+                        val realPlanes = param.result as? Array<Image.Plane> ?: return
+                        applyVirtualPlanes(realPlanes, image.width, image.height, packageName)
                     }
                 }
             )
@@ -608,7 +665,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
     private fun hookImageReader(lpparam: XC_LoadPackage.LoadPackageParam) {
         val pkg = lpparam.packageName
 
-        // Track ImageReader surfaces and formats
         try {
             XposedHelpers.findAndHookMethod(
                 ImageReader::class.java,
@@ -635,7 +691,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
             XposedBridge.log("$TAG: Could not hook ImageReader.newInstance: ${t.message}")
         }
 
-        // Hook SurfaceImage.getPlanes() upfront for standard AOSP & Samsung One UI
         try {
             val surfaceImageClass = XposedHelpers.findClass(
                 "android.media.ImageReader\$SurfaceImage",
@@ -645,7 +700,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
         } catch (_: Throwable) {
         }
 
-        // Dynamically hook any runtime Image subclass returned by acquireLatestImage / acquireNextImage
         val acquireHook = object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 val img = param.result as? Image ?: return
@@ -669,8 +723,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
     private fun hookCamera2(lpparam: XC_LoadPackage.LoadPackageParam) {
         val pkg = lpparam.packageName
 
-        // Only redirect CaptureRequest targets for non-ImageReader preview surfaces (WhatsApp/IG/etc.)
-        // Leave ImageReader surfaces (Brave/Chrome) untouched so Camera2 never throws IllegalArgumentException!
         try {
             XposedHelpers.findAndHookMethod(
                 CaptureRequest.Builder::class.java,
@@ -715,7 +767,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
             return
         }
 
-        // 1. createCaptureSession(List<Surface>, StateCallback, Handler)
         try {
             XposedHelpers.findAndHookMethod(
                 deviceImplClass,
@@ -729,7 +780,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         @Suppress("UNCHECKED_CAST")
                         val outputs = param.args[0] as? List<Surface> ?: return
                         if (outputs.isEmpty()) return
-                        // Prevent double-hooking when CameraDeviceImpl delegates internally
                         if (outputs.any { isDummySurface(it) }) return
 
                         var hasYuvReader = false
@@ -760,7 +810,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
         } catch (_: Throwable) {
         }
 
-        // 2. createCaptureSessionByOutputConfigurations(List<OutputConfiguration>, StateCallback, Handler)
         try {
             XposedHelpers.findAndHookMethod(
                 deviceImplClass,
@@ -805,7 +854,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
         } catch (_: Throwable) {
         }
 
-        // 3. createCaptureSession(SessionConfiguration) (Android 9+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
                 XposedHelpers.findAndHookMethod(
@@ -859,7 +907,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
             }
         }
 
-        // 4. Clean up on CameraDevice.close()
         try {
             XposedHelpers.findAndHookMethod(
                 deviceImplClass,
