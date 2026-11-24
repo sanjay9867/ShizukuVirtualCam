@@ -1,5 +1,6 @@
 package com.sanjay.shizukuvcam.service
 
+import android.os.ParcelFileDescriptor
 import android.system.Os
 import androidx.annotation.Keep
 import com.sanjay.shizukuvcam.IShellService
@@ -12,8 +13,11 @@ import kotlin.system.exitProcess
 class ShellUserService : IShellService.Stub() {
 
     companion object {
-        const val SHARED_VIDEO_PATH = "/data/local/tmp/vcam_feed.mp4"
-        const val SHARED_STATE_PATH = "/data/local/tmp/vcam_enabled"
+        const val TMP_VIDEO_PATH = "/data/local/tmp/vcam_feed.mp4"
+        const val TMP_STATE_PATH = "/data/local/tmp/vcam_enabled"
+        const val PUBLIC_DIR_PATH = "/storage/emulated/0/DCIM/Camera1"
+        const val PUBLIC_VIDEO_PATH = "$PUBLIC_DIR_PATH/vcam_feed.mp4"
+        const val PUBLIC_STATE_PATH = "$PUBLIC_DIR_PATH/vcam_enabled"
     }
 
     override fun destroy() {
@@ -32,30 +36,58 @@ class ShellUserService : IShellService.Stub() {
         }
     }
 
-    override fun deployVideoFeed(sourcePath: String): Boolean {
+    override fun deployVideoFd(pfd: ParcelFileDescriptor?): String {
+        if (pfd == null) return "ERR: Could not open selected video"
         return try {
-            val src = File(sourcePath)
-            if (!src.exists()) return false
-            val dst = File(SHARED_VIDEO_PATH)
-            FileInputStream(src).use { input ->
-                FileOutputStream(dst).use { output ->
+            val tmpDst = File(TMP_VIDEO_PATH)
+            ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
+                FileOutputStream(tmpDst).use { output ->
                     input.copyTo(output, bufferSize = 65536)
                 }
             }
-            // Make world-readable so sandboxed target apps hooked via LSPatch can read it
-            Os.chmod(SHARED_VIDEO_PATH, 0b110_100_100) // 0644
-            true
+            if (!tmpDst.exists() || tmpDst.length() == 0L) {
+                return "ERR: Copied file is empty"
+            }
+            try {
+                Os.chmod(TMP_VIDEO_PATH, 0b110_100_100) // 0644
+            } catch (_: Throwable) {
+            }
+
+            // Mirror to /storage/emulated/0/DCIM/Camera1 for apps blocked from /data/local/tmp
+            try {
+                val pubDir = File(PUBLIC_DIR_PATH)
+                if (!pubDir.exists()) pubDir.mkdirs()
+                val pubDst = File(PUBLIC_VIDEO_PATH)
+                FileInputStream(tmpDst).use { input ->
+                    FileOutputStream(pubDst).use { output ->
+                        input.copyTo(output, bufferSize = 65536)
+                    }
+                }
+            } catch (_: Throwable) {
+            }
+
+            "OK"
         } catch (e: Exception) {
-            e.printStackTrace()
-            false
+            "ERR: ${e.javaClass.simpleName}: ${e.message}"
         }
     }
 
     override fun setVirtualCamEnabled(enabled: Boolean): Boolean {
+        val value = if (enabled) "1" else "0"
         return try {
-            val stateFile = File(SHARED_STATE_PATH)
-            stateFile.writeText(if (enabled) "1" else "0")
-            Os.chmod(SHARED_STATE_PATH, 0b110_100_100) // 0644
+            val tmpState = File(TMP_STATE_PATH)
+            tmpState.writeText(value)
+            try {
+                Os.chmod(TMP_STATE_PATH, 0b110_100_100) // 0644
+            } catch (_: Throwable) {
+            }
+
+            try {
+                val pubDir = File(PUBLIC_DIR_PATH)
+                if (!pubDir.exists()) pubDir.mkdirs()
+                File(PUBLIC_STATE_PATH).writeText(value)
+            } catch (_: Throwable) {
+            }
             true
         } catch (e: Exception) {
             e.printStackTrace()
@@ -65,8 +97,10 @@ class ShellUserService : IShellService.Stub() {
 
     override fun isVirtualCamEnabled(): Boolean {
         return try {
-            val stateFile = File(SHARED_STATE_PATH)
-            stateFile.exists() && stateFile.readText().trim() == "1"
+            val tmpState = File(TMP_STATE_PATH)
+            val pubState = File(PUBLIC_STATE_PATH)
+            (tmpState.exists() && tmpState.readText().trim() == "1") ||
+                (pubState.exists() && pubState.readText().trim() == "1")
         } catch (_: Exception) {
             false
         }
@@ -74,16 +108,45 @@ class ShellUserService : IShellService.Stub() {
 
     override fun hasDeployedVideo(): Boolean {
         return try {
-            val f = File(SHARED_VIDEO_PATH)
-            f.exists() && f.length() > 0L
+            val tmpFile = File(TMP_VIDEO_PATH)
+            val pubFile = File(PUBLIC_VIDEO_PATH)
+            (tmpFile.exists() && tmpFile.length() > 0L) ||
+                (pubFile.exists() && pubFile.length() > 0L)
         } catch (_: Exception) {
             false
         }
     }
 
-    override fun forceStopPackage(packageName: String) {
-        if (packageName.matches(Regex("^[a-zA-Z0-9._]+$"))) {
+    override fun prepareAndRestartPackage(packageName: String): String {
+        if (!packageName.matches(Regex("^[a-zA-Z0-9._]+$"))) {
+            return "ERR: Invalid package name"
+        }
+        return try {
+            // Copy video + state directly into target app's own external files dir
+            // (Readable by the target app with zero extra permissions and no SELinux denial)
+            val targetDir = File("/storage/emulated/0/Android/data/$packageName/files")
+            if (!targetDir.exists()) targetDir.mkdirs()
+
+            val srcVideo = File(TMP_VIDEO_PATH)
+            if (srcVideo.exists() && srcVideo.length() > 0L) {
+                FileInputStream(srcVideo).use { input ->
+                    FileOutputStream(File(targetDir, "vcam_feed.mp4")).use { output ->
+                        input.copyTo(output, bufferSize = 65536)
+                    }
+                }
+            }
+
+            val enabledText = if (isVirtualCamEnabled()) "1" else "0"
+            File(targetDir, "vcam_enabled").writeText(enabledText)
+
+            // Best-effort storage permission grant + force-stop
+            runCommand("pm grant $packageName android.permission.READ_MEDIA_VIDEO")
+            runCommand("pm grant $packageName android.permission.READ_EXTERNAL_STORAGE")
             runCommand("am force-stop $packageName")
+            "OK"
+        } catch (e: Exception) {
+            runCommand("am force-stop $packageName")
+            "ERR: ${e.message}"
         }
     }
 }

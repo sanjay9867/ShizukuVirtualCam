@@ -17,33 +17,59 @@ import java.io.File
 class VirtualCamHook : IXposedHookLoadPackage {
 
     companion object {
-        private const val VIDEO_PATH = "/data/local/tmp/vcam_feed.mp4"
-        private const val STATE_PATH = "/data/local/tmp/vcam_enabled"
         private const val TAG = "ShizukuVCam"
 
         private var activePlayer: MediaPlayer? = null
         private var dummyTexture: SurfaceTexture? = null
         private var dummySurface: Surface? = null
 
-        fun isActive(): Boolean {
-            return try {
-                val stateFile = File(STATE_PATH)
-                val videoFile = File(VIDEO_PATH)
-                stateFile.exists() &&
-                    stateFile.readText().trim() == "1" &&
-                    videoFile.exists() &&
-                    videoFile.length() > 0L
-            } catch (_: Throwable) {
-                false
+        private fun resolveReadableVideo(packageName: String): String? {
+            val candidates = listOf(
+                "/storage/emulated/0/Android/data/$packageName/files/vcam_feed.mp4",
+                "/storage/emulated/0/DCIM/Camera1/vcam_feed.mp4",
+                "/data/local/tmp/vcam_feed.mp4"
+            )
+            for (path in candidates) {
+                try {
+                    val f = File(path)
+                    if (f.exists() && f.canRead() && f.length() > 0L) {
+                        return path
+                    }
+                } catch (_: Throwable) {
+                }
             }
+            return null
+        }
+
+        private fun isStateEnabled(packageName: String): Boolean {
+            val candidates = listOf(
+                "/storage/emulated/0/Android/data/$packageName/files/vcam_enabled",
+                "/storage/emulated/0/DCIM/Camera1/vcam_enabled",
+                "/data/local/tmp/vcam_enabled"
+            )
+            for (path in candidates) {
+                try {
+                    val f = File(path)
+                    if (f.exists() && f.canRead()) {
+                        return f.readText().trim() == "1"
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+            return false
+        }
+
+        fun getActiveVideoPath(packageName: String): String? {
+            if (!isStateEnabled(packageName)) return null
+            return resolveReadableVideo(packageName)
         }
 
         @Synchronized
-        fun startVideoOnSurface(targetSurface: Surface) {
+        fun startVideoOnSurface(targetSurface: Surface, videoPath: String) {
             try {
                 activePlayer?.release()
                 activePlayer = MediaPlayer().apply {
-                    setDataSource(VIDEO_PATH)
+                    setDataSource(videoPath)
                     setSurface(targetSurface)
                     isLooping = true
                     setVolume(0f, 0f)
@@ -54,7 +80,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                     }
                     prepareAsync()
                 }
-                XposedBridge.log("$TAG: Playing $VIDEO_PATH onto target Surface")
+                XposedBridge.log("$TAG: Playing $videoPath onto target Surface")
             } catch (t: Throwable) {
                 XposedBridge.log("$TAG: Failed to bind MediaPlayer: ${t.message}")
             }
@@ -98,12 +124,11 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 SessionConfiguration::class.java,
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        if (!isActive()) return
+                        val videoPath = getActiveVideoPath(lpparam.packageName) ?: return
                         val sessionConfig = param.args[0] as? SessionConfiguration ?: return
                         val configs = sessionConfig.outputConfigurations ?: return
                         if (configs.isEmpty()) return
 
-                        // Pick the primary preview/video output surface
                         val primaryConfig = configs[0]
                         val realSurface = primaryConfig.surface ?: return
 
@@ -127,8 +152,8 @@ class VirtualCamHook : IXposedHookLoadPackage {
                             }
 
                             param.args[0] = replacementSession
-                            startVideoOnSurface(realSurface)
-                            XposedBridge.log("$TAG: Hooked Camera2 SessionConfiguration in ${lpparam.packageName}")
+                            startVideoOnSurface(realSurface, videoPath)
+                            XposedBridge.log("$TAG: Hooked Camera2 in ${lpparam.packageName}")
                         } catch (t: Throwable) {
                             XposedBridge.log("$TAG: Camera2 hook error: ${t.message}")
                         }
@@ -149,7 +174,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 SurfaceTexture::class.java,
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        if (!isActive()) return
+                        val videoPath = getActiveVideoPath(lpparam.packageName) ?: return
                         val realTex = param.args[0] as? SurfaceTexture ?: return
                         try {
                             val dummyTex = SurfaceTexture(11).apply {
@@ -160,8 +185,8 @@ class VirtualCamHook : IXposedHookLoadPackage {
                             param.args[0] = dummyTex
 
                             val targetSurf = Surface(realTex)
-                            startVideoOnSurface(targetSurf)
-                            XposedBridge.log("$TAG: Hooked Camera1 setPreviewTexture in ${lpparam.packageName}")
+                            startVideoOnSurface(targetSurf, videoPath)
+                            XposedBridge.log("$TAG: Hooked Camera1 in ${lpparam.packageName}")
                         } catch (t: Throwable) {
                             XposedBridge.log("$TAG: Camera1 hook error: ${t.message}")
                         }

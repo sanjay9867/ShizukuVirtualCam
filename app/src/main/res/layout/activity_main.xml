@@ -13,7 +13,7 @@
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="Shizuku VirtualCam"
+            android:text="Shizuku VirtualCam v1.1"
             android:textSize="26sp"
             android:textStyle="bold" />
 
@@ -80,7 +80,7 @@
                 <TextView
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:text="2. Deploy Video Feed (Bypasses Scoped Storage)"
+                    android:text="2. Deploy Video Feed (Binder FD Stream)"
                     android:textSize="16sp"
                     android:textStyle="bold" />
 
@@ -141,7 +141,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:text="Force-Stop Selected App (Apply Changes)" />
+                    android:text="Sync Video to App &amp; Force-Stop" />
 
                 <Button
                     android:id="@+id/btnOpenLSPatch"
