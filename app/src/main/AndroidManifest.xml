@@ -16,13 +16,12 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Material3.DayNight.NoActionBar">
 
-        <!-- Xposed / LSPatch Module Metadata -->
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Shizuku-powered Rootless Virtual Camera (Camera1, Camera2 &amp; Chromium Browsers)" />
+            android:value="Shizuku-powered Rootless Virtual Camera (Brave/Chrome YUV + Camera1/Camera2)" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />
@@ -36,7 +35,6 @@
             </intent-filter>
         </activity>
 
-        <!-- Required Shizuku Provider -->
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"

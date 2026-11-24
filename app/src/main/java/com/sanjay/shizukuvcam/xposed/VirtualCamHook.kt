@@ -8,8 +8,10 @@ import android.hardware.camera2.CameraCaptureSession
 import android.hardware.camera2.CaptureRequest
 import android.hardware.camera2.params.OutputConfiguration
 import android.hardware.camera2.params.SessionConfiguration
+import android.media.Image
 import android.media.ImageReader
 import android.media.MediaCodec
+import android.media.MediaCodecInfo
 import android.media.MediaExtractor
 import android.media.MediaFormat
 import android.media.MediaPlayer
@@ -24,7 +26,10 @@ import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import java.io.File
+import java.nio.ByteBuffer
+import java.util.Collections
 import java.util.WeakHashMap
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
 class VirtualCamHook : IXposedHookLoadPackage {
@@ -34,14 +39,25 @@ class VirtualCamHook : IXposedHookLoadPackage {
 
         private val lock = Any()
         private val surfaceToDummy = WeakHashMap<Surface, Surface>()
+        private val dummySurfaces: MutableSet<Surface> =
+            Collections.newSetFromMap(WeakHashMap<Surface, Boolean>())
         private val dummyTextures = ArrayList<SurfaceTexture>()
         private val imageReaderFormats = WeakHashMap<Surface, Int>()
+        private val hookedImageClasses = ConcurrentHashMap<Class<*>, Boolean>()
 
         private var activePlayer: MediaPlayer? = null
-        private var codecFeeder: CodecSurfaceFeeder? = null
+        private var yuvDecoder: YuvVideoDecoder? = null
+        private var activeYuvPath: String? = null
         private var nextTexId = 100
+        private var lastToastMs = 0L
 
-        private fun showToast(message: String) {
+        private var slotIndex = 0
+        private val bufferSlots = arrayOfNulls<DirectYuvBuffers>(2)
+
+        private fun showToastOnce(message: String) {
+            val now = System.currentTimeMillis()
+            if (now - lastToastMs < 4000L) return
+            lastToastMs = now
             try {
                 val app = AndroidAppHelper.currentApplication() ?: return
                 Handler(Looper.getMainLooper()).post {
@@ -90,19 +106,37 @@ class VirtualCamHook : IXposedHookLoadPackage {
             return false
         }
 
+        fun getRotationDegrees(packageName: String): Int {
+            val candidates = listOf(
+                "/storage/emulated/0/Android/data/$packageName/files/vcam_rotation",
+                "/storage/emulated/0/DCIM/Camera1/vcam_rotation",
+                "/data/local/tmp/vcam_rotation"
+            )
+            for (path in candidates) {
+                try {
+                    val f = File(path)
+                    if (f.exists() && f.canRead()) {
+                        return f.readText().trim().toIntOrNull() ?: 0
+                    }
+                } catch (_: Throwable) {
+                }
+            }
+            return 0
+        }
+
         fun getActiveVideoPath(packageName: String): String? {
             if (!isStateEnabled(packageName)) return null
             val path = resolveReadableVideo(packageName)
             if (path == null) {
-                XposedBridge.log("$TAG: Enabled for $packageName but vcam_feed.mp4 not readable! Tap Sync in Shizuku VirtualCam.")
-                showToast("ShizukuVCam: Video missing — tap Sync for this app")
+                XposedBridge.log("$TAG: Enabled for $packageName but vcam_feed.mp4 not readable!")
+                showToastOnce("ShizukuVCam: Video missing — tap Sync for this app")
             }
             return path
         }
 
-        private fun isJpegSurface(surface: Surface): Boolean {
+        private fun isDummySurface(surface: Surface): Boolean {
             synchronized(lock) {
-                return imageReaderFormats[surface] == ImageFormat.JPEG
+                return dummySurfaces.contains(surface)
             }
         }
 
@@ -112,8 +146,15 @@ class VirtualCamHook : IXposedHookLoadPackage {
             }
         }
 
+        private fun isJpegSurface(surface: Surface): Boolean {
+            synchronized(lock) {
+                return imageReaderFormats[surface] == ImageFormat.JPEG
+            }
+        }
+
         fun getOrCreateDummySurface(realSurface: Surface): Surface {
             synchronized(lock) {
+                if (dummySurfaces.contains(realSurface)) return realSurface
                 surfaceToDummy[realSurface]?.let { existing ->
                     if (existing.isValid) return existing
                 }
@@ -123,18 +164,27 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 dummyTextures.add(tex)
                 val dummy = Surface(tex)
                 surfaceToDummy[realSurface] = dummy
+                dummySurfaces.add(dummy)
                 return dummy
             }
         }
 
-        fun stopActiveFeed() {
+        fun ensureYuvDecoderRunning(videoPath: String) {
             synchronized(lock) {
-                try {
-                    codecFeeder?.stop()
-                } catch (_: Throwable) {
+                if (yuvDecoder != null && activeYuvPath == videoPath && yuvDecoder!!.isRunning()) {
+                    return
                 }
-                codecFeeder = null
+                yuvDecoder?.stop()
+                val decoder = YuvVideoDecoder(videoPath)
+                yuvDecoder = decoder
+                activeYuvPath = videoPath
+                decoder.start()
+                XposedBridge.log("$TAG: Started ByteBuffer YUV decoder for $videoPath")
+            }
+        }
 
+        fun stopAllFeeds() {
+            synchronized(lock) {
                 try {
                     activePlayer?.stop()
                 } catch (_: Throwable) {
@@ -144,29 +194,17 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 } catch (_: Throwable) {
                 }
                 activePlayer = null
-            }
-        }
 
-        fun startVideoOnSurface(targetSurface: Surface, videoPath: String, useCodecFirst: Boolean) {
-            stopActiveFeed()
-            synchronized(lock) {
-                if (useCodecFirst) {
-                    val feeder = CodecSurfaceFeeder(videoPath, targetSurface) {
-                        // Fallback to MediaPlayer if MediaCodec fails on this device
-                        startMediaPlayer(targetSurface, videoPath)
-                    }
-                    codecFeeder = feeder
-                    feeder.start()
-                    showToast("ShizukuVCam: Active (Browser/YUV Stream)")
-                    XposedBridge.log("$TAG: Started MediaCodec surface feeder for $videoPath")
-                } else {
-                    startMediaPlayer(targetSurface, videoPath)
-                    showToast("ShizukuVCam: Active (Preview Stream)")
+                try {
+                    yuvDecoder?.stop()
+                } catch (_: Throwable) {
                 }
+                yuvDecoder = null
+                activeYuvPath = null
             }
         }
 
-        private fun startMediaPlayer(targetSurface: Surface, videoPath: String) {
+        fun startPreviewMediaPlayer(targetSurface: Surface, videoPath: String) {
             synchronized(lock) {
                 try {
                     activePlayer?.release()
@@ -182,21 +220,173 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         }
                         prepareAsync()
                     }
-                    XposedBridge.log("$TAG: Playing $videoPath onto target Surface via MediaPlayer")
+                    showToastOnce("ShizukuVCam: Active (Preview Stream)")
+                    XposedBridge.log("$TAG: Playing $videoPath onto preview Surface")
                 } catch (t: Throwable) {
                     XposedBridge.log("$TAG: Failed to bind MediaPlayer: ${t.message}")
                 }
             }
         }
+
+        fun buildVirtualPlanes(dstW: Int, dstH: Int, packageName: String): Array<Image.Plane>? {
+            if (dstW <= 0 || dstH <= 0) return null
+            val videoPath = getActiveVideoPath(packageName) ?: return null
+            ensureYuvDecoderRunning(videoPath)
+            showToastOnce("ShizukuVCam: Active (YUV Frame Injection)")
+
+            val rotation = getRotationDegrees(packageName)
+            val frame = yuvDecoder?.latestFrame
+
+            synchronized(lock) {
+                val idx = slotIndex
+                slotIndex = (slotIndex + 1) and 1
+                var slot = bufferSlots[idx]
+                if (slot == null || slot.w != dstW || slot.h != dstH) {
+                    slot = DirectYuvBuffers(dstW, dstH)
+                    bufferSlots[idx] = slot
+                }
+
+                if (frame == null) {
+                    slot.fillBlack()
+                } else {
+                    slot.fillFromFrame(frame, rotation)
+                }
+
+                return arrayOf(
+                    VirtualPlane(slot.yBuf.duplicate().apply { rewind() }, dstW, 1),
+                    VirtualPlane(slot.uBuf.duplicate().apply { rewind() }, slot.cw, 1),
+                    VirtualPlane(slot.vBuf.duplicate().apply { rewind() }, slot.cw, 1)
+                )
+            }
+        }
     }
 
-    private class CodecSurfaceFeeder(
-        private val videoPath: String,
-        private val targetSurface: Surface,
-        private val onFailureFallback: () -> Unit
-    ) {
+    private class VirtualPlane(
+        private val buffer: ByteBuffer,
+        private val rowStride: Int,
+        private val pixelStride: Int
+    ) : Image.Plane() {
+        override fun getRowStride(): Int = rowStride
+        override fun getPixelStride(): Int = pixelStride
+        override fun getBuffer(): ByteBuffer = buffer
+    }
+
+    private class YuvFrame(
+        val width: Int,
+        val height: Int,
+        val y: ByteArray,
+        val u: ByteArray,
+        val v: ByteArray
+    )
+
+    private class DirectYuvBuffers(val w: Int, val h: Int) {
+        val cw: Int = (w + 1) / 2
+        val ch: Int = (h + 1) / 2
+
+        private val yArr = ByteArray(w * h)
+        private val uArr = ByteArray(cw * ch)
+        private val vArr = ByteArray(cw * ch)
+
+        val yBuf: ByteBuffer = ByteBuffer.allocateDirect(w * h)
+        val uBuf: ByteBuffer = ByteBuffer.allocateDirect(cw * ch)
+        val vBuf: ByteBuffer = ByteBuffer.allocateDirect(cw * ch)
+
+        fun fillBlack() {
+            yArr.fill(16.toByte())
+            uArr.fill(128.toByte())
+            vArr.fill(128.toByte())
+            commit()
+        }
+
+        fun fillFromFrame(src: YuvFrame, rotation: Int) {
+            scalePlane(src.y, src.width, src.height, yArr, w, h, rotation)
+            val srcCw = (src.width + 1) / 2
+            val srcCh = (src.height + 1) / 2
+            scalePlane(src.u, srcCw, srcCh, uArr, cw, ch, rotation)
+            scalePlane(src.v, srcCw, srcCh, vArr, cw, ch, rotation)
+            commit()
+        }
+
+        private fun commit() {
+            yBuf.clear()
+            yBuf.put(yArr)
+            yBuf.flip()
+
+            uBuf.clear()
+            uBuf.put(uArr)
+            uBuf.flip()
+
+            vBuf.clear()
+            vBuf.put(vArr)
+            vBuf.flip()
+        }
+
+        private fun scalePlane(
+            src: ByteArray,
+            srcW: Int,
+            srcH: Int,
+            dst: ByteArray,
+            dstW: Int,
+            dstH: Int,
+            rotation: Int
+        ) {
+            if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return
+            val maxSx = srcW - 1
+            val maxSy = srcH - 1
+            var dstPos = 0
+
+            when (rotation) {
+                90 -> {
+                    for (y in 0 until dstH) {
+                        val sx = (y * srcW / dstH).coerceIn(0, maxSx)
+                        for (x in 0 until dstW) {
+                            val sy = ((dstW - 1 - x) * srcH / dstW).coerceIn(0, maxSy)
+                            dst[dstPos++] = src[sy * srcW + sx]
+                        }
+                    }
+                }
+                180 -> {
+                    for (y in 0 until dstH) {
+                        val sy = ((dstH - 1 - y) * srcH / dstH).coerceIn(0, maxSy)
+                        val rowOff = sy * srcW
+                        for (x in 0 until dstW) {
+                            val sx = ((dstW - 1 - x) * srcW / dstW).coerceIn(0, maxSx)
+                            dst[dstPos++] = src[rowOff + sx]
+                        }
+                    }
+                }
+                270 -> {
+                    for (y in 0 until dstH) {
+                        val sx = ((dstH - 1 - y) * srcW / dstH).coerceIn(0, maxSx)
+                        for (x in 0 until dstW) {
+                            val sy = (x * srcH / dstW).coerceIn(0, maxSy)
+                            dst[dstPos++] = src[sy * srcW + sx]
+                        }
+                    }
+                }
+                else -> {
+                    for (y in 0 until dstH) {
+                        val sy = (y * srcH / dstH).coerceIn(0, maxSy)
+                        val rowOff = sy * srcW
+                        for (x in 0 until dstW) {
+                            val sx = (x * srcW / dstW).coerceIn(0, maxSx)
+                            dst[dstPos++] = src[rowOff + sx]
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private class YuvVideoDecoder(private val videoPath: String) {
         private val running = AtomicBoolean(false)
         private var worker: Thread? = null
+
+        @Volatile
+        var latestFrame: YuvFrame? = null
+            private set
+
+        fun isRunning(): Boolean = running.get()
 
         fun start() {
             if (!running.compareAndSet(false, true)) return
@@ -219,24 +409,30 @@ class VirtualCamHook : IXposedHookLoadPackage {
                     if (videoTrack < 0 || videoFormat == null) {
                         throw IllegalStateException("No video track in $videoPath")
                     }
+
                     extractor.selectTrack(videoTrack)
+                    videoFormat.setInteger(
+                        MediaFormat.KEY_COLOR_FORMAT,
+                        MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible
+                    )
+
                     val mime = videoFormat.getString(MediaFormat.KEY_MIME)!!
                     codec = MediaCodec.createDecoderByType(mime)
-                    codec.configure(videoFormat, targetSurface, null, 0)
+                    codec.configure(videoFormat, null, null, 0)
                     codec.start()
 
                     val bufferInfo = MediaCodec.BufferInfo()
                     var startWallMs = System.currentTimeMillis()
                     var firstPtsUs = -1L
 
-                    while (running.get() && targetSurface.isValid) {
+                    while (running.get()) {
                         val inIndex = codec.dequeueInputBuffer(10_000L)
                         if (inIndex >= 0) {
                             val inputBuf = codec.getInputBuffer(inIndex)
                             if (inputBuf != null) {
                                 val sampleSize = extractor.readSampleData(inputBuf, 0)
                                 if (sampleSize < 0) {
-                                    extractor.seekTo(0, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
+                                    extractor.seekTo(0L, MediaExtractor.SEEK_TO_CLOSEST_SYNC)
                                     codec.flush()
                                     startWallMs = System.currentTimeMillis()
                                     firstPtsUs = -1L
@@ -259,18 +455,36 @@ class VirtualCamHook : IXposedHookLoadPackage {
                                 val actualElapsedMs = System.currentTimeMillis() - startWallMs
                                 val sleepMs = targetElapsedMs - actualElapsedMs
                                 if (sleepMs in 1L..200L) {
-                                    Thread.sleep(sleepMs)
+                                    try {
+                                        Thread.sleep(sleepMs)
+                                    } catch (_: InterruptedException) {
+                                        break
+                                    }
                                 }
                             }
-                            codec.releaseOutputBuffer(outIndex, true)
+
+                            try {
+                                val outImg = codec.getOutputImage(outIndex)
+                                if (outImg != null) {
+                                    try {
+                                        extractI420Frame(outImg)?.let { frame ->
+                                            latestFrame = frame
+                                        }
+                                    } finally {
+                                        outImg.close()
+                                    }
+                                }
+                            } catch (t: Throwable) {
+                                XposedBridge.log("$TAG: getOutputImage error: ${t.message}")
+                            }
+
+                            codec.releaseOutputBuffer(outIndex, false)
                         }
                     }
                 } catch (t: Throwable) {
-                    XposedBridge.log("$TAG: CodecSurfaceFeeder error (${t.message}), falling back to MediaPlayer")
-                    if (running.get() && targetSurface.isValid) {
-                        onFailureFallback()
-                    }
+                    XposedBridge.log("$TAG: YuvVideoDecoder stopped: ${t.message}")
                 } finally {
+                    running.set(false)
                     try {
                         codec?.stop()
                     } catch (_: Throwable) {
@@ -284,7 +498,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                     } catch (_: Throwable) {
                     }
                 }
-            }, "ShizukuVCam-Decoder").apply {
+            }, "ShizukuVCam-YuvDecoder").apply {
                 isDaemon = true
                 start()
             }
@@ -294,6 +508,64 @@ class VirtualCamHook : IXposedHookLoadPackage {
             running.set(false)
             worker?.interrupt()
             worker = null
+        }
+
+        private fun extractI420Frame(image: Image): YuvFrame? {
+            val planes = image.planes
+            if (planes.size < 3) return null
+
+            val crop = image.cropRect
+            val w = if (crop.width() > 0) crop.width() else image.width
+            val h = if (crop.height() > 0) crop.height() else image.height
+            val left = crop.left.coerceAtLeast(0)
+            val top = crop.top.coerceAtLeast(0)
+            if (w <= 0 || h <= 0) return null
+
+            val cw = (w + 1) / 2
+            val ch = (h + 1) / 2
+
+            val yOut = ByteArray(w * h)
+            val uOut = ByteArray(cw * ch)
+            val vOut = ByteArray(cw * ch)
+
+            copyPlane(planes[0], left, top, w, h, yOut)
+            copyPlane(planes[1], left / 2, top / 2, cw, ch, uOut)
+            copyPlane(planes[2], left / 2, top / 2, cw, ch, vOut)
+
+            return YuvFrame(w, h, yOut, uOut, vOut)
+        }
+
+        private fun copyPlane(
+            plane: Image.Plane,
+            left: Int,
+            top: Int,
+            width: Int,
+            height: Int,
+            dst: ByteArray
+        ) {
+            val buf = plane.buffer.duplicate()
+            val rowStride = plane.rowStride
+            val pixelStride = plane.pixelStride
+            val limit = buf.limit()
+
+            if (pixelStride == 1) {
+                for (row in 0 until height) {
+                    val srcOffset = (top + row) * rowStride + left
+                    if (srcOffset + width > limit) break
+                    buf.position(srcOffset)
+                    buf.get(dst, row * width, width)
+                }
+            } else {
+                var dstIdx = 0
+                for (row in 0 until height) {
+                    val rowStart = (top + row) * rowStride + left * pixelStride
+                    for (col in 0 until width) {
+                        val pos = rowStart + col * pixelStride
+                        if (pos >= limit) break
+                        dst[dstIdx++] = buf.get(pos)
+                    }
+                }
+            }
         }
     }
 
@@ -305,12 +577,38 @@ class VirtualCamHook : IXposedHookLoadPackage {
             return
         }
 
-        hookImageReader()
+        hookImageReader(lpparam)
         hookCamera2(lpparam)
         hookCamera1(lpparam)
     }
 
-    private fun hookImageReader() {
+    private fun ensureImageClassHooked(imageClass: Class<*>, packageName: String) {
+        if (hookedImageClasses.putIfAbsent(imageClass, true) != null) return
+        try {
+            XposedHelpers.findAndHookMethod(
+                imageClass,
+                "getPlanes",
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        val image = param.thisObject as? Image ?: return
+                        if (image.format != ImageFormat.YUV_420_888) return
+                        val virtualPlanes = buildVirtualPlanes(image.width, image.height, packageName)
+                        if (virtualPlanes != null) {
+                            param.result = virtualPlanes
+                        }
+                    }
+                }
+            )
+            XposedBridge.log("$TAG: Hooked ${imageClass.name}.getPlanes() in $packageName")
+        } catch (t: Throwable) {
+            XposedBridge.log("$TAG: Failed to hook ${imageClass.name}.getPlanes(): ${t.message}")
+        }
+    }
+
+    private fun hookImageReader(lpparam: XC_LoadPackage.LoadPackageParam) {
+        val pkg = lpparam.packageName
+
+        // Track ImageReader surfaces and formats
         try {
             XposedHelpers.findAndHookMethod(
                 ImageReader::class.java,
@@ -336,10 +634,43 @@ class VirtualCamHook : IXposedHookLoadPackage {
         } catch (t: Throwable) {
             XposedBridge.log("$TAG: Could not hook ImageReader.newInstance: ${t.message}")
         }
+
+        // Hook SurfaceImage.getPlanes() upfront for standard AOSP & Samsung One UI
+        try {
+            val surfaceImageClass = XposedHelpers.findClass(
+                "android.media.ImageReader\$SurfaceImage",
+                lpparam.classLoader
+            )
+            ensureImageClassHooked(surfaceImageClass, pkg)
+        } catch (_: Throwable) {
+        }
+
+        // Dynamically hook any runtime Image subclass returned by acquireLatestImage / acquireNextImage
+        val acquireHook = object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                val img = param.result as? Image ?: return
+                if (img.format != ImageFormat.YUV_420_888) return
+                val videoPath = getActiveVideoPath(pkg) ?: return
+                ensureYuvDecoderRunning(videoPath)
+                ensureImageClassHooked(img.javaClass, pkg)
+            }
+        }
+
+        try {
+            XposedHelpers.findAndHookMethod(ImageReader::class.java, "acquireLatestImage", acquireHook)
+        } catch (_: Throwable) {
+        }
+        try {
+            XposedHelpers.findAndHookMethod(ImageReader::class.java, "acquireNextImage", acquireHook)
+        } catch (_: Throwable) {
+        }
     }
 
     private fun hookCamera2(lpparam: XC_LoadPackage.LoadPackageParam) {
-        // 1. Hook CaptureRequest.Builder.addTarget / removeTarget so Camera2 stays consistent with dummy surfaces
+        val pkg = lpparam.packageName
+
+        // Only redirect CaptureRequest targets for non-ImageReader preview surfaces (WhatsApp/IG/etc.)
+        // Leave ImageReader surfaces (Brave/Chrome) untouched so Camera2 never throws IllegalArgumentException!
         try {
             XposedHelpers.findAndHookMethod(
                 CaptureRequest.Builder::class.java,
@@ -347,9 +678,9 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 Surface::class.java,
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        if (getActiveVideoPath(lpparam.packageName) == null) return
+                        if (getActiveVideoPath(pkg) == null) return
                         val surface = param.args[0] as? Surface ?: return
-                        if (isJpegSurface(surface)) return
+                        if (isDummySurface(surface) || isImageReaderSurface(surface)) return
                         param.args[0] = getOrCreateDummySurface(surface)
                     }
                 }
@@ -384,8 +715,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
             return
         }
 
-        // 2. Hook CameraDeviceImpl.createCaptureSession(List<Surface>, StateCallback, Handler)
-        // THIS is the exact overload used by Brave, Chrome, and Chromium-based browsers!
+        // 1. createCaptureSession(List<Surface>, StateCallback, Handler)
         try {
             XposedHelpers.findAndHookMethod(
                 deviceImplClass,
@@ -395,39 +725,42 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 Handler::class.java,
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        val videoPath = getActiveVideoPath(lpparam.packageName) ?: return
+                        val videoPath = getActiveVideoPath(pkg) ?: return
                         @Suppress("UNCHECKED_CAST")
                         val outputs = param.args[0] as? List<Surface> ?: return
                         if (outputs.isEmpty()) return
+                        // Prevent double-hooking when CameraDeviceImpl delegates internally
+                        if (outputs.any { isDummySurface(it) }) return
 
-                        var primarySurface: Surface? = null
+                        var hasYuvReader = false
+                        var previewSurface: Surface? = null
                         val newOutputs = ArrayList<Surface>(outputs.size)
+
                         for (surf in outputs) {
-                            if (isJpegSurface(surf)) {
+                            if (isImageReaderSurface(surf)) {
+                                if (!isJpegSurface(surf)) hasYuvReader = true
                                 newOutputs.add(surf)
                             } else {
-                                if (primarySurface == null) primarySurface = surf
+                                if (previewSurface == null) previewSurface = surf
                                 newOutputs.add(getOrCreateDummySurface(surf))
                             }
                         }
 
-                        if (primarySurface != null) {
+                        if (hasYuvReader) {
+                            ensureYuvDecoderRunning(videoPath)
+                        }
+                        val targetPreview = previewSurface
+                        if (targetPreview != null) {
                             param.args[0] = newOutputs
-                            startVideoOnSurface(
-                                primarySurface!!,
-                                videoPath,
-                                useCodecFirst = isImageReaderSurface(primarySurface!!)
-                            )
-                            XposedBridge.log("$TAG: Hooked Camera2 List<Surface> in ${lpparam.packageName}")
+                            startPreviewMediaPlayer(targetPreview, videoPath)
                         }
                     }
                 }
             )
-        } catch (t: Throwable) {
-            XposedBridge.log("$TAG: Could not hook createCaptureSession(List): ${t.message}")
+        } catch (_: Throwable) {
         }
 
-        // 3. Hook CameraDeviceImpl.createCaptureSessionByOutputConfigurations(List, StateCallback, Handler)
+        // 2. createCaptureSessionByOutputConfigurations(List<OutputConfiguration>, StateCallback, Handler)
         try {
             XposedHelpers.findAndHookMethod(
                 deviceImplClass,
@@ -437,40 +770,42 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 Handler::class.java,
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        val videoPath = getActiveVideoPath(lpparam.packageName) ?: return
+                        val videoPath = getActiveVideoPath(pkg) ?: return
                         @Suppress("UNCHECKED_CAST")
                         val configs = param.args[0] as? List<OutputConfiguration> ?: return
                         if (configs.isEmpty()) return
+                        if (configs.any { it.surface?.let { s -> isDummySurface(s) } == true }) return
 
-                        var primarySurface: Surface? = null
+                        var hasYuvReader = false
+                        var previewSurface: Surface? = null
                         val newConfigs = ArrayList<OutputConfiguration>(configs.size)
+
                         for (cfg in configs) {
                             val surf = cfg.surface
-                            if (surf == null || isJpegSurface(surf)) {
+                            if (surf == null || isImageReaderSurface(surf)) {
+                                if (surf != null && !isJpegSurface(surf)) hasYuvReader = true
                                 newConfigs.add(cfg)
                             } else {
-                                if (primarySurface == null) primarySurface = surf
+                                if (previewSurface == null) previewSurface = surf
                                 newConfigs.add(OutputConfiguration(getOrCreateDummySurface(surf)))
                             }
                         }
 
-                        if (primarySurface != null) {
+                        if (hasYuvReader) {
+                            ensureYuvDecoderRunning(videoPath)
+                        }
+                        val targetPreview = previewSurface
+                        if (targetPreview != null) {
                             param.args[0] = newConfigs
-                            startVideoOnSurface(
-                                primarySurface!!,
-                                videoPath,
-                                useCodecFirst = isImageReaderSurface(primarySurface!!)
-                            )
-                            XposedBridge.log("$TAG: Hooked Camera2 OutputConfigurations in ${lpparam.packageName}")
+                            startPreviewMediaPlayer(targetPreview, videoPath)
                         }
                     }
                 }
             )
-        } catch (t: Throwable) {
-            XposedBridge.log("$TAG: Could not hook createCaptureSessionByOutputConfigurations: ${t.message}")
+        } catch (_: Throwable) {
         }
 
-        // 4. Hook CameraDeviceImpl.createCaptureSession(SessionConfiguration) (Android 9+ modern apps)
+        // 3. createCaptureSession(SessionConfiguration) (Android 9+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
             try {
                 XposedHelpers.findAndHookMethod(
@@ -479,24 +814,32 @@ class VirtualCamHook : IXposedHookLoadPackage {
                     SessionConfiguration::class.java,
                     object : XC_MethodHook() {
                         override fun beforeHookedMethod(param: MethodHookParam) {
-                            val videoPath = getActiveVideoPath(lpparam.packageName) ?: return
+                            val videoPath = getActiveVideoPath(pkg) ?: return
                             val sessionConfig = param.args[0] as? SessionConfiguration ?: return
                             val configs = sessionConfig.outputConfigurations ?: return
                             if (configs.isEmpty()) return
+                            if (configs.any { it.surface?.let { s -> isDummySurface(s) } == true }) return
 
-                            var primarySurface: Surface? = null
+                            var hasYuvReader = false
+                            var previewSurface: Surface? = null
                             val newConfigs = ArrayList<OutputConfiguration>(configs.size)
+
                             for (cfg in configs) {
                                 val surf = cfg.surface
-                                if (surf == null || isJpegSurface(surf)) {
+                                if (surf == null || isImageReaderSurface(surf)) {
+                                    if (surf != null && !isJpegSurface(surf)) hasYuvReader = true
                                     newConfigs.add(cfg)
                                 } else {
-                                    if (primarySurface == null) primarySurface = surf
+                                    if (previewSurface == null) previewSurface = surf
                                     newConfigs.add(OutputConfiguration(getOrCreateDummySurface(surf)))
                                 }
                             }
 
-                            if (primarySurface != null) {
+                            if (hasYuvReader) {
+                                ensureYuvDecoderRunning(videoPath)
+                            }
+                            val targetPreview = previewSurface
+                            if (targetPreview != null) {
                                 val replacementSession = SessionConfiguration(
                                     sessionConfig.sessionType,
                                     newConfigs,
@@ -507,29 +850,23 @@ class VirtualCamHook : IXposedHookLoadPackage {
                                     replacementSession.sessionParameters = it
                                 }
                                 param.args[0] = replacementSession
-                                startVideoOnSurface(
-                                    primarySurface!!,
-                                    videoPath,
-                                    useCodecFirst = isImageReaderSurface(primarySurface!!)
-                                )
-                                XposedBridge.log("$TAG: Hooked Camera2 SessionConfiguration in ${lpparam.packageName}")
+                                startPreviewMediaPlayer(targetPreview, videoPath)
                             }
                         }
                     }
                 )
-            } catch (t: Throwable) {
-                XposedBridge.log("$TAG: Could not hook createCaptureSession(SessionConfiguration): ${t.message}")
+            } catch (_: Throwable) {
             }
         }
 
-        // 5. Release player cleanly when CameraDevice closes
+        // 4. Clean up on CameraDevice.close()
         try {
             XposedHelpers.findAndHookMethod(
                 deviceImplClass,
                 "close",
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        stopActiveFeed()
+                        stopAllFeeds()
                     }
                 }
             )
@@ -539,6 +876,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
 
     @Suppress("DEPRECATION")
     private fun hookCamera1(lpparam: XC_LoadPackage.LoadPackageParam) {
+        val pkg = lpparam.packageName
         try {
             XposedHelpers.findAndHookMethod(
                 Camera::class.java,
@@ -546,7 +884,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 SurfaceTexture::class.java,
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        val videoPath = getActiveVideoPath(lpparam.packageName) ?: return
+                        val videoPath = getActiveVideoPath(pkg) ?: return
                         val realTex = param.args[0] as? SurfaceTexture ?: return
                         try {
                             val dummyTex = SurfaceTexture(nextTexId++).apply {
@@ -556,16 +894,14 @@ class VirtualCamHook : IXposedHookLoadPackage {
                             param.args[0] = dummyTex
 
                             val targetSurf = Surface(realTex)
-                            startVideoOnSurface(targetSurf, videoPath, useCodecFirst = false)
-                            XposedBridge.log("$TAG: Hooked Camera1 setPreviewTexture in ${lpparam.packageName}")
+                            startPreviewMediaPlayer(targetSurf, videoPath)
                         } catch (t: Throwable) {
                             XposedBridge.log("$TAG: Camera1 hook error: ${t.message}")
                         }
                     }
                 }
             )
-        } catch (t: Throwable) {
-            XposedBridge.log("$TAG: Could not hook Camera1 in ${lpparam.packageName}: ${t.message}")
+        } catch (_: Throwable) {
         }
     }
 }

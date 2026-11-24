@@ -11,8 +11,8 @@ android {
         applicationId = "com.sanjay.shizukuvcam"
         minSdk = 26
         targetSdk = 34
-        versionCode = 3
-        versionName = "1.2.0"
+        versionCode = 4
+        versionName = "1.3.0"
     }
 
     buildTypes {
@@ -41,14 +41,11 @@ android {
 }
 
 dependencies {
-    // Shizuku API & Provider
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 
-    // Xposed API (provided at runtime by LSPatch)
     compileOnly("de.robv.android.xposed:api:82")
 
-    // AndroidX & Material 3 UI
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")

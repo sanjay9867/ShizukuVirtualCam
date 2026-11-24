@@ -7,6 +7,8 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Bundle
 import android.os.IBinder
+import android.view.View
+import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.Spinner
@@ -33,9 +35,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnGrantShizuku: Button
     private lateinit var btnPickVideo: Button
     private lateinit var switchEnableVCam: MaterialSwitch
+    private lateinit var spinnerRotation: Spinner
     private lateinit var spinnerApps: Spinner
     private lateinit var btnForceStopApp: Button
     private lateinit var btnOpenLSPatch: Button
+
+    private val rotationOptions = listOf(
+        "Rotation: 0° (Original)" to 0,
+        "Rotation: 90° Clockwise" to 90,
+        "Rotation: 180° (Upside Down)" to 180,
+        "Rotation: 270° (Front Camera Fix)" to 270
+    )
 
     private var targetApps: List<Pair<String, String>> = emptyList()
 
@@ -107,9 +117,29 @@ class MainActivity : AppCompatActivity() {
         btnGrantShizuku = findViewById(R.id.btnGrantShizuku)
         btnPickVideo = findViewById(R.id.btnPickVideo)
         switchEnableVCam = findViewById(R.id.switchEnableVCam)
+        spinnerRotation = findViewById(R.id.spinnerRotation)
         spinnerApps = findViewById(R.id.spinnerApps)
         btnForceStopApp = findViewById(R.id.btnForceStopApp)
         btnOpenLSPatch = findViewById(R.id.btnOpenLSPatch)
+
+        spinnerRotation.adapter = ArrayAdapter(
+            this,
+            android.R.layout.simple_spinner_dropdown_item,
+            rotationOptions.map { it.first }
+        )
+
+        spinnerRotation.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                if (isSyncingUi) return
+                val svc = shellService ?: return
+                val deg = rotationOptions[position].second
+                lifecycleScope.launch(Dispatchers.IO) {
+                    svc.setRotationDegrees(deg)
+                }
+            }
+
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
 
         loadInstalledTargetApps()
 
@@ -263,6 +293,8 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch(Dispatchers.IO) {
             val hasVideo = svc.hasDeployedVideo()
             val enabled = svc.isVirtualCamEnabled()
+            val rotation = svc.getRotationDegrees()
+            val rotIndex = rotationOptions.indexOfFirst { it.second == rotation }.coerceAtLeast(0)
             withContext(Dispatchers.Main) {
                 tvVideoStatus.text = if (hasVideo) {
                     "Feed Status: Ready (Video deployed via Shizuku)"
@@ -271,6 +303,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 isSyncingUi = true
                 switchEnableVCam.isChecked = enabled
+                spinnerRotation.setSelection(rotIndex)
                 isSyncingUi = false
             }
         }

@@ -10,4 +10,6 @@ interface IShellService {
     boolean isVirtualCamEnabled() = 4;
     boolean hasDeployedVideo() = 5;
     String prepareAndRestartPackage(String packageName) = 6;
+    boolean setRotationDegrees(int degrees) = 7;
+    int getRotationDegrees() = 8;
 }

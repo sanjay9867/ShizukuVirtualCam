@@ -15,9 +15,11 @@ class ShellUserService : IShellService.Stub() {
     companion object {
         const val TMP_VIDEO_PATH = "/data/local/tmp/vcam_feed.mp4"
         const val TMP_STATE_PATH = "/data/local/tmp/vcam_enabled"
+        const val TMP_ROTATION_PATH = "/data/local/tmp/vcam_rotation"
         const val PUBLIC_DIR_PATH = "/storage/emulated/0/DCIM/Camera1"
         const val PUBLIC_VIDEO_PATH = "$PUBLIC_DIR_PATH/vcam_feed.mp4"
         const val PUBLIC_STATE_PATH = "$PUBLIC_DIR_PATH/vcam_enabled"
+        const val PUBLIC_ROTATION_PATH = "$PUBLIC_DIR_PATH/vcam_rotation"
     }
 
     override fun destroy() {
@@ -49,7 +51,7 @@ class ShellUserService : IShellService.Stub() {
                 return "ERR: Copied file is empty"
             }
             try {
-                Os.chmod(TMP_VIDEO_PATH, 0b110_100_100) // 0644
+                Os.chmod(TMP_VIDEO_PATH, 0b110_100_100)
             } catch (_: Throwable) {
             }
 
@@ -74,10 +76,9 @@ class ShellUserService : IShellService.Stub() {
     override fun setVirtualCamEnabled(enabled: Boolean): Boolean {
         val value = if (enabled) "1" else "0"
         return try {
-            val tmpState = File(TMP_STATE_PATH)
-            tmpState.writeText(value)
+            File(TMP_STATE_PATH).writeText(value)
             try {
-                Os.chmod(TMP_STATE_PATH, 0b110_100_100) // 0644
+                Os.chmod(TMP_STATE_PATH, 0b110_100_100)
             } catch (_: Throwable) {
             }
 
@@ -116,6 +117,45 @@ class ShellUserService : IShellService.Stub() {
         }
     }
 
+    override fun setRotationDegrees(degrees: Int): Boolean {
+        val normalized = when (degrees) {
+            90, 180, 270 -> degrees
+            else -> 0
+        }
+        val value = normalized.toString()
+        return try {
+            File(TMP_ROTATION_PATH).writeText(value)
+            try {
+                Os.chmod(TMP_ROTATION_PATH, 0b110_100_100)
+            } catch (_: Throwable) {
+            }
+            try {
+                val pubDir = File(PUBLIC_DIR_PATH)
+                if (!pubDir.exists()) pubDir.mkdirs()
+                File(PUBLIC_ROTATION_PATH).writeText(value)
+            } catch (_: Throwable) {
+            }
+            true
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    override fun getRotationDegrees(): Int {
+        return try {
+            val tmpFile = File(TMP_ROTATION_PATH)
+            val pubFile = File(PUBLIC_ROTATION_PATH)
+            val raw = when {
+                tmpFile.exists() -> tmpFile.readText().trim()
+                pubFile.exists() -> pubFile.readText().trim()
+                else -> "0"
+            }
+            raw.toIntOrNull() ?: 0
+        } catch (_: Exception) {
+            0
+        }
+    }
+
     override fun prepareAndRestartPackage(packageName: String): String {
         if (!packageName.matches(Regex("^[a-zA-Z0-9._]+$"))) {
             return "ERR: Invalid package name"
@@ -135,7 +175,9 @@ class ShellUserService : IShellService.Stub() {
 
             val enabledText = if (isVirtualCamEnabled()) "1" else "0"
             File(targetDir, "vcam_enabled").writeText(enabledText)
+            File(targetDir, "vcam_rotation").writeText(getRotationDegrees().toString())
 
+            runCommand("pm grant $packageName android.permission.CAMERA")
             runCommand("pm grant $packageName android.permission.READ_MEDIA_VIDEO")
             runCommand("pm grant $packageName android.permission.READ_EXTERNAL_STORAGE")
             runCommand("am force-stop $packageName")

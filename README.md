@@ -1,6 +1,6 @@
-# ShizukuVirtualCam v1.2 (Rootless Android Virtual Camera)
+# ShizukuVirtualCam v1.3 (Rootless Android Virtual Camera)
 
-## What Changed in v1.2
-- Added `CameraDeviceImpl.createCaptureSession(List<Surface>, StateCallback, Handler)` and `CaptureRequest.Builder.addTarget(Surface)` hooks required by **Brave, Chrome, and Chromium-based browsers**.
-- Added `ImageReader` (`YUV_420_888`) tracking and a `MediaCodec` surface video decoder with automatic `MediaPlayer` fallback so browser WebRTC video feeds work reliably.
-- Added on-screen diagnostic Toasts (`ShizukuVCam: Active ...` or `Video missing`) so you can immediately verify whether LSPatch loaded the module inside Brave.
+## What Changed in v1.3
+- Fixed the Brave/Chromium Camera2 session abort (`Give browser permission to use your camera`) caused by double-hooking `CameraDeviceImpl.createCaptureSession` and pushing `MediaCodec` directly onto a CPU-readable `YUV_420_888` `ImageReader` surface.
+- Implemented native-compatible **YUV Frame Injection** (`MediaCodec` ByteBuffer `COLOR_FormatYUV420Flexible` -> `ImageReader.SurfaceImage.getPlanes()` DirectByteBuffer I420 planes) so Brave's Camera2 session configures cleanly with zero errors.
+- Added a **Rotation selector** (`0°`, `90°`, `180°`, `270°`) in Step 2 so sideways front/back camera feeds can be fixed in one tap.
