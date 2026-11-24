@@ -414,9 +414,9 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         if (primarySurface != null) {
                             param.args[0] = newOutputs
                             startVideoOnSurface(
-                                primarySurface,
+                                primarySurface!!,
                                 videoPath,
-                                useCodecFirst = isImageReaderSurface(primarySurface)
+                                useCodecFirst = isImageReaderSurface(primarySurface!!)
                             )
                             XposedBridge.log("$TAG: Hooked Camera2 List<Surface> in ${lpparam.packageName}")
                         }
@@ -457,9 +457,9 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         if (primarySurface != null) {
                             param.args[0] = newConfigs
                             startVideoOnSurface(
-                                primarySurface,
+                                primarySurface!!,
                                 videoPath,
-                                useCodecFirst = isImageReaderSurface(primarySurface)
+                                useCodecFirst = isImageReaderSurface(primarySurface!!)
                             )
                             XposedBridge.log("$TAG: Hooked Camera2 OutputConfigurations in ${lpparam.packageName}")
                         }
@@ -508,9 +508,9 @@ class VirtualCamHook : IXposedHookLoadPackage {
                                 }
                                 param.args[0] = replacementSession
                                 startVideoOnSurface(
-                                    primarySurface,
+                                    primarySurface!!,
                                     videoPath,
-                                    useCodecFirst = isImageReaderSurface(primarySurface)
+                                    useCodecFirst = isImageReaderSurface(primarySurface!!)
                                 )
                                 XposedBridge.log("$TAG: Hooked Camera2 SessionConfiguration in ${lpparam.packageName}")
                             }
