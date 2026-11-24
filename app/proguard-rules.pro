@@ -1,0 +1,2 @@
+-keep class com.sanjay.shizukuvcam.service.ShellUserService { *; }
+-keep class com.sanjay.shizukuvcam.xposed.** { *; }
