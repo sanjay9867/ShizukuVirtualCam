@@ -59,6 +59,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var switchEnableVCam: MaterialSwitch
     private lateinit var tvFeedStatus: TextView
     private lateinit var etReplicateToken: EditText
+    private lateinit var btnLivePortraitAnimate: Button
     private lateinit var btnGenerateAiPoses: Button
     private lateinit var btnClearAiPoses: Button
     private lateinit var spinnerApps: Spinner
@@ -133,6 +134,11 @@ class MainActivity : AppCompatActivity() {
             if (uri != null) handlePickedVideo(uri)
         }
 
+    private val pickDrivingVideoLauncher =
+        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+            if (uri != null) handleLivePortraitWithDrivingVideo(uri)
+        }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -175,6 +181,7 @@ class MainActivity : AppCompatActivity() {
         switchEnableVCam = findViewById(R.id.switchEnableVCam)
         tvFeedStatus = findViewById(R.id.tvFeedStatus)
         etReplicateToken = findViewById(R.id.etReplicateToken)
+        btnLivePortraitAnimate = findViewById(R.id.btnLivePortraitAnimate)
         btnGenerateAiPoses = findViewById(R.id.btnGenerateAiPoses)
         btnClearAiPoses = findViewById(R.id.btnClearAiPoses)
         spinnerApps = findViewById(R.id.spinnerApps)
@@ -354,6 +361,34 @@ class MainActivity : AppCompatActivity() {
             ).show()
         }
 
+        // True Photorealistic Human Motion Transfer (LivePortrait AI)
+        btnLivePortraitAnimate.setOnClickListener {
+            val token = etReplicateToken.text.toString().trim()
+            if (token.isBlank()) {
+                Toast.makeText(this, "Paste your Replicate API token (r8_...) first", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
+            val localPhoto = File(filesDir, "vcam_photo.jpg")
+            if (!localPhoto.exists()) {
+                Toast.makeText(this, "Upload a Face Photo first!", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            if (ShizukuBridge.service == null) {
+                Toast.makeText(this, "Connect Shizuku first!", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            getSharedPreferences("vcam_prefs", MODE_PRIVATE).edit()
+                .putString("replicate_token", token)
+                .apply()
+
+            Toast.makeText(
+                this,
+                "Pick a short 4-8s real selfie driving video (head turns + blinks)",
+                Toast.LENGTH_LONG
+            ).show()
+            pickDrivingVideoLauncher.launch("video/*")
+        }
+
         btnGenerateAiPoses.setOnClickListener {
             val token = etReplicateToken.text.toString().trim()
             if (token.isBlank()) {
@@ -369,7 +404,7 @@ class MainActivity : AppCompatActivity() {
                 .putString("replicate_token", token)
                 .apply()
 
-            btnGenerateAiPoses.isEnabled = false
+            setAiButtonsEnabled(false)
             tvFeedStatus.text = "Starting Replicate AI 3D Pose Generator..."
             lifecycleScope.launch(Dispatchers.IO) {
                 val result = ReplicatePoseClient.generateAllPoses(
@@ -391,14 +426,14 @@ class MainActivity : AppCompatActivity() {
 
                     withContext(Dispatchers.Main) {
                         reloadLocalPreviewBank()
-                        btnGenerateAiPoses.isEnabled = true
-                        tvFeedStatus.text = "AI 3D Poses Ready! D-Pad & Auto-Move now blend neural head turns."
+                        setAiButtonsEnabled(true)
+                        tvFeedStatus.text = "AI 3D Poses Ready! D-Pad & Auto-Move now blend neural poses."
                         Toast.makeText(this@MainActivity, "All 6 AI Neural Poses Deployed!", Toast.LENGTH_LONG).show()
                     }
                 } else {
                     val err = result.exceptionOrNull()?.message ?: "Unknown error"
                     withContext(Dispatchers.Main) {
-                        btnGenerateAiPoses.isEnabled = true
+                        setAiButtonsEnabled(true)
                         tvFeedStatus.text = "AI Pose Error: $err"
                     }
                 }
@@ -411,11 +446,12 @@ class MainActivity : AppCompatActivity() {
                     File(filesDir, spec.fileName).delete()
                 }
                 ShizukuBridge.service?.clearAiPoses(ShizukuBridge.activeTargetPackage)
+                ShizukuBridge.state.mode = "photo"
                 ShizukuBridge.state.assetVersion = System.currentTimeMillis()
                 ShizukuBridge.pushControlState()
                 withContext(Dispatchers.Main) {
                     reloadLocalPreviewBank()
-                    tvFeedStatus.text = "Cleared Cloud AI Poses (using fast on-device 2.5D face engine)."
+                    tvFeedStatus.text = "Reset to Human-Motion Photo Mode."
                 }
             }
         }
@@ -427,7 +463,7 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             val pkg = ShizukuBridge.activeTargetPackage
-            tvFeedStatus.text = "Syncing photo/poses & controls to $pkg..."
+            tvFeedStatus.text = "Syncing assets & controls to $pkg..."
             lifecycleScope.launch(Dispatchers.IO) {
                 svc.writeControlState(ShizukuBridge.state.serialize(), pkg)
                 val res = svc.prepareAndRestartPackage(pkg)
@@ -448,6 +484,75 @@ class MainActivity : AppCompatActivity() {
                 startActivity(launchIntent)
             } else {
                 Toast.makeText(this, "LSPatch Manager not installed.", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
+    private fun setAiButtonsEnabled(enabled: Boolean) {
+        btnLivePortraitAnimate.isEnabled = enabled
+        btnGenerateAiPoses.isEnabled = enabled
+    }
+
+    private fun handleLivePortraitWithDrivingVideo(drivingUri: Uri) {
+        val token = etReplicateToken.text.toString().trim()
+        val localPhoto = File(filesDir, "vcam_photo.jpg")
+        setAiButtonsEnabled(false)
+        tvFeedStatus.text = "Preparing driving video for LivePortrait AI..."
+
+        lifecycleScope.launch(Dispatchers.IO) {
+            val drivingCache = File(cacheDir, "driving_input.mp4")
+            val outputVideo = File(filesDir, "liveportrait_output.mp4")
+            try {
+                contentResolver.openInputStream(drivingUri)?.use { input ->
+                    FileOutputStream(drivingCache).use { output ->
+                        input.copyTo(output, bufferSize = 65536)
+                    }
+                } ?: throw IllegalStateException("Cannot read driving video")
+
+                val res = ReplicatePoseClient.generateLivePortraitVideo(
+                    apiToken = token,
+                    sourcePhotoFile = localPhoto,
+                    drivingVideoFile = drivingCache,
+                    outVideoFile = outputVideo
+                ) { statusMsg ->
+                    runOnUiThread { tvFeedStatus.text = statusMsg }
+                }
+
+                drivingCache.delete()
+
+                if (res.isSuccess) {
+                    runOnUiThread { tvFeedStatus.text = "Deploying photorealistic video via Shizuku..." }
+                    val deployRes = ShizukuBridge.deployLocalFileSync(outputVideo, "vcam_feed.mp4")
+                    if (deployRes == "OK") {
+                        ShizukuBridge.state.mode = "video"
+                        ShizukuBridge.state.enabled = true
+                        ShizukuBridge.state.assetVersion = System.currentTimeMillis()
+                        ShizukuBridge.pushControlState()
+                        withContext(Dispatchers.Main) {
+                            setAiButtonsEnabled(true)
+                            syncUiFromState()
+                            tvFeedStatus.text = "LivePortrait Video LIVE! Tap Sync to Target App & open Brave."
+                            Toast.makeText(this@MainActivity, "Photorealistic Human Motion Deployed!", Toast.LENGTH_LONG).show()
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            setAiButtonsEnabled(true)
+                            tvFeedStatus.text = "Shizuku deploy error: $deployRes"
+                        }
+                    }
+                } else {
+                    val err = res.exceptionOrNull()?.message ?: "Unknown error"
+                    withContext(Dispatchers.Main) {
+                        setAiButtonsEnabled(true)
+                        tvFeedStatus.text = "LivePortrait Error: $err"
+                    }
+                }
+            } catch (e: Exception) {
+                drivingCache.delete()
+                withContext(Dispatchers.Main) {
+                    setAiButtonsEnabled(true)
+                    tvFeedStatus.text = "LivePortrait Error: ${e.message}"
+                }
             }
         }
     }
@@ -497,7 +602,7 @@ class MainActivity : AppCompatActivity() {
                     if (res == "OK") {
                         reloadLocalPreviewBank()
                         syncUiFromState()
-                        tvFeedStatus.text = "Face Photo Deployed! Use D-Pad / Auto-Move or tap Sync for Brave."
+                        tvFeedStatus.text = "Face Photo Deployed! Use Auto-Move, D-Pad, or LivePortrait AI below."
                         Toast.makeText(this@MainActivity, "Face Photo Live & Ready!", Toast.LENGTH_SHORT).show()
                     } else {
                         tvFeedStatus.text = "Deploy failed: $res"

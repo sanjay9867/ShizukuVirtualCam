@@ -12,7 +12,7 @@
         android:orientation="vertical"
         android:padding="18dp">
 
-        <!-- Header Row (Manual Mode + Shizuku Status) -->
+        <!-- Header Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -24,9 +24,9 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Manual Mode"
+                android:text="Manual Mode v2.2"
                 android:textColor="#FFFFFF"
-                android:textSize="26sp"
+                android:textSize="24sp"
                 android:textStyle="bold" />
 
             <TextView
@@ -306,7 +306,7 @@ Movement"
                 android:textSize="15sp" />
         </LinearLayout>
 
-        <!-- Cloud AI Neural Pose Studio (Optional Upgrade) -->
+        <!-- Cloud AI Neural Studio (LivePortrait + Expression Editor) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -318,7 +318,7 @@ Movement"
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="2. Cloud AI Studio (Replicate Expression-Editor)"
+                android:text="2. True Human-Motion AI Studio (Replicate)"
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -327,7 +327,7 @@ Movement"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
-                android:text="Optional: Paste a Replicate token to generate real neural 3D Left/Right/Up/Down/Blink/Smile poses from your photo."
+                android:text="Best Realism: Upload your Face Photo above, paste a Replicate token, and transfer real human head turns &amp; blinks from a short selfie video using LivePortrait AI."
                 android:textColor="#B9EBD0"
                 android:textSize="12sp" />
 
@@ -345,6 +345,16 @@ Movement"
                 android:textColorHint="#6EA98C"
                 android:textSize="14sp" />
 
+            <Button
+                android:id="@+id/btnLivePortraitAnimate"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="#1DB954"
+                android:text="LivePortrait AI: Animate Photo w/ Real Video"
+                android:textColor="#041F13"
+                android:textStyle="bold" />
+
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
@@ -357,10 +367,9 @@ Movement"
                     android:layout_height="wrap_content"
                     android:layout_weight="2"
                     android:layout_marginEnd="6dp"
-                    android:backgroundTint="#1DB954"
-                    android:text="AI Generate 3D Poses"
-                    android:textColor="#041F13"
-                    android:textStyle="bold" />
+                    android:backgroundTint="#082418"
+                    android:text="Generate 6 D-Pad Poses"
+                    android:textColor="#2EE87A" />
 
                 <Button
                     android:id="@+id/btnClearAiPoses"

@@ -116,7 +116,6 @@ object ShizukuBridge {
         }
     }
 
-    // Coalesces rapid D-pad updates so Binder IPC never backs up or lags
     fun pushControlState() {
         pendingPayload.set(state.serialize())
         notifyStateChanged()

@@ -2,9 +2,9 @@ package com.sanjay.shizukuvcam.service
 
 import android.app.Service
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.content.res.ColorStateList
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity

@@ -51,6 +51,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
         private var activePlayer: MediaPlayer? = null
         private var yuvVideoDecoder: YuvVideoDecoder? = null
         private var activeVideoPath: String? = null
+        private var activeVideoVer: Long = -1L
         private var photoWorker: PhotoAnimWorker? = null
 
         private var cachedControl: ControlState = ControlState()
@@ -172,10 +173,15 @@ class VirtualCamHook : IXposedHookLoadPackage {
                     }
                     val vidFile = resolveReadableFile(packageName, "vcam_feed.mp4") ?: return
                     val vidPath = vidFile.absolutePath
-                    if (yuvVideoDecoder == null || activeVideoPath != vidPath || !yuvVideoDecoder!!.isRunning()) {
+                    if (yuvVideoDecoder == null ||
+                        activeVideoPath != vidPath ||
+                        activeVideoVer != ctrl.assetVersion ||
+                        !yuvVideoDecoder!!.isRunning()
+                    ) {
                         yuvVideoDecoder?.stop()
                         yuvVideoDecoder = YuvVideoDecoder(vidPath).also { it.start() }
                         activeVideoPath = vidPath
+                        activeVideoVer = ctrl.assetVersion
                     }
                 }
             }
@@ -210,7 +216,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         setOnPreparedListener { mp -> mp.start() }
                         prepareAsync()
                     }
-                    showToastOnce("ShizukuVCam v2.1: Active (Preview Stream)")
+                    showToastOnce("ShizukuVCam v2.2: Active (Preview Stream)")
                 } catch (t: Throwable) {
                     XposedBridge.log("$TAG: MediaPlayer bind error: ${t.message}")
                 }
@@ -272,10 +278,10 @@ class VirtualCamHook : IXposedHookLoadPackage {
 
             ensureActiveWorkerRunning(packageName, ctrl)
             val frame = if (ctrl.mode == "photo") {
-                showToastOnce("ShizukuVCam v2.1: Live AI Photo Mode")
+                showToastOnce("ShizukuVCam v2.2: Human-Motion Photo Mode")
                 photoWorker?.latestFrame
             } else {
-                showToastOnce("ShizukuVCam v2.1: Live Video Mode")
+                showToastOnce("ShizukuVCam v2.2: LivePortrait / Video Mode")
                 yuvVideoDecoder?.latestFrame
             }
 
@@ -299,7 +305,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
             val vOv: PlaneOverride
 
             synchronized(lock) {
-                // Fast-path: if exact same frame & camera transform already filled into slot, reuse with 0 CPU!
                 val cachedSlot = lastSlot
                 if (frame != null &&
                     cachedSlot != null &&
@@ -430,7 +435,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         }
 
                         try {
-                            Thread.sleep(32L) // ~30 fps smooth animation
+                            Thread.sleep(32L)
                         } catch (_: InterruptedException) {
                             break
                         }
@@ -454,7 +459,6 @@ class VirtualCamHook : IXposedHookLoadPackage {
         }
     }
 
-    // Zero-float-per-frame cached LUT transformer (eliminates camera thread lag)
     private class DirectYuvBuffers(val w: Int, val h: Int) {
         val cw: Int = (w + 1) / 2
         val ch: Int = (h + 1) / 2

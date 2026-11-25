@@ -24,7 +24,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="Shizuku VirtualCam v2.1 - Low-Latency Auto-Move AI Photo &amp; Video Virtual Camera" />
+            android:value="Shizuku VirtualCam v2.2 - Human-Motion Physics + LivePortrait AI Virtual Camera" />
         <meta-data
             android:name="xposedminversion"
             android:value="82" />

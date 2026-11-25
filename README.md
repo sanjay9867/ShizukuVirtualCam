@@ -1,9 +1,9 @@
-# ShizukuVirtualCam v2.1 (Auto-Move + Low-Latency YUV Pipeline)
+# ShizukuVirtualCam v2.2 (Human-Motion Spring Physics + LivePortrait AI)
 
-## What Changed in v2.1
-- **One-Tap Auto-Move (`Auto: ON/OFF`)**: Added to both the floating overlay and the main Manual Mode panel to run a smooth, hands-free Left -> Right -> Up -> Down -> Center head sweep with automatic blinks. Tapping the D-Pad center reset or any direction immediately returns to manual control.
-- **10x Faster YUV Frame Pipeline (Lag Fix)**:
-  - Cached precomputed 1D rotation/flip/zoom lookup tables (`yLut`, `uvLut`) in `DirectYuvBuffers` so camera frame injection runs with zero per-pixel floating-point math.
-  - Added frame sequence deduplication (`lastRenderedSeq`) so repeated `getPlanes()` calls reuse the already-filled `DirectByteBuffer` in 0 ms.
-  - Replaced per-pixel `sampleMeshOffset()` and redundant chroma mesh interpolation in `FaceWarpEngine` with a single scanline fixed-point 16.16 `warpLut` and reusable `YuvFrame` buffers (zero GC stutter).
-  - Coalesced rapid D-Pad / overlay updates over Shizuku Binder (`AtomicReference` latest-wins queue).
+## What Changed in v2.2
+- **LivePortrait AI Motion Transfer (`fofr/live-portrait`)**: Upload a face photo + pick a short 4-8s real selfie driving video -> generates a photorealistic 3D animated `.mp4` with genuine human head turns, blinks, occlusion, and lighting, and automatically deploys it via Shizuku.
+- **Upgraded On-Device Human Motion Engine (`FaceWarpEngine.kt`)**:
+  - Critically-damped spring physics for natural weighted head acceleration and deceleration.
+  - Neck-anchored pivot + coupled natural head roll when turning left/right.
+  - Organic human waypoint Auto-Move with randomized dwell pauses and micro-sway (replaces mechanical sine loop).
+  - Asymmetric real blink envelope (65ms snap close -> 25ms hold -> 175ms soft open) + subtle eye-gaze lead.
