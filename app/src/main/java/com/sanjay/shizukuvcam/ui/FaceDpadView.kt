@@ -183,10 +183,10 @@ class FaceDpadView @JvmOverloads constructor(
                 val normY = (-dy / outerR).coerceIn(-1f, 1f)
                 when (zone) {
                     Zone.CENTER -> onDirectionCommand?.invoke(Zone.CENTER, 0f, 0f)
-                    Zone.LEFT -> onDirectionCommand?.invoke(Zone.LEFT, normX.coerceAtMost(-0.65f), 0f)
-                    Zone.RIGHT -> onDirectionCommand?.invoke(Zone.RIGHT, normX.coerceAtLeast(0.65f), 0f)
-                    Zone.UP -> onDirectionCommand?.invoke(Zone.UP, 0f, normY.coerceAtLeast(0.65f))
-                    Zone.DOWN -> onDirectionCommand?.invoke(Zone.DOWN, 0f, normY.coerceAtMost(-0.65f))
+                    Zone.LEFT -> onDirectionCommand?.invoke(Zone.LEFT, normX.coerceAtMost(-0.55f), normY * 0.35f)
+                    Zone.RIGHT -> onDirectionCommand?.invoke(Zone.RIGHT, normX.coerceAtLeast(0.55f), normY * 0.35f)
+                    Zone.UP -> onDirectionCommand?.invoke(Zone.UP, normX * 0.35f, normY.coerceAtLeast(0.55f))
+                    Zone.DOWN -> onDirectionCommand?.invoke(Zone.DOWN, normX * 0.35f, normY.coerceAtMost(-0.55f))
                     else -> {}
                 }
                 return true

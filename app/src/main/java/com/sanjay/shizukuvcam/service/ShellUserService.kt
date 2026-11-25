@@ -19,22 +19,7 @@ class ShellUserService : IShellService.Stub() {
         private val ALLOWED_FILES = setOf(
             "vcam_feed.mp4",
             "vcam_photo.jpg",
-            "vcam_pose_left.jpg",
-            "vcam_pose_right.jpg",
-            "vcam_pose_up.jpg",
-            "vcam_pose_down.jpg",
-            "vcam_pose_blink.jpg",
-            "vcam_pose_smile.jpg",
             "vcam_ctrl.txt"
-        )
-
-        private val POSE_FILES = listOf(
-            "vcam_pose_left.jpg",
-            "vcam_pose_right.jpg",
-            "vcam_pose_up.jpg",
-            "vcam_pose_down.jpg",
-            "vcam_pose_blink.jpg",
-            "vcam_pose_smile.jpg"
         )
     }
 
@@ -164,21 +149,6 @@ class ShellUserService : IShellService.Stub() {
             val pubFile = File(PUBLIC_DIR, fileName)
             (tmpFile.exists() && tmpFile.length() > 0L) ||
                 (pubFile.exists() && pubFile.length() > 0L)
-        } catch (_: Exception) {
-            false
-        }
-    }
-
-    override fun clearAiPoses(activePackage: String?): Boolean {
-        return try {
-            for (name in POSE_FILES) {
-                File(TMP_DIR, name).delete()
-                File(PUBLIC_DIR, name).delete()
-                if (isValidPackage(activePackage)) {
-                    File("/storage/emulated/0/Android/data/$activePackage/files", name).delete()
-                }
-            }
-            true
         } catch (_: Exception) {
             false
         }

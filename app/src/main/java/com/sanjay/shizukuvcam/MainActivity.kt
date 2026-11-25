@@ -8,6 +8,10 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Color
 import android.graphics.PointF
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.FaceDetector
 import android.net.Uri
 import android.os.Bundle
@@ -18,8 +22,8 @@ import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.Button
-import android.widget.EditText
 import android.widget.ImageView
+import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
@@ -27,10 +31,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.materialswitch.MaterialSwitch
-import com.sanjay.shizukuvcam.ai.ReplicatePoseClient
 import com.sanjay.shizukuvcam.service.FloatingControlService
 import com.sanjay.shizukuvcam.ui.FaceDpadView
-import com.sanjay.shizukuvcam.xposed.FacePoseBank
+import com.sanjay.shizukuvcam.xposed.FacePhotoAsset
 import com.sanjay.shizukuvcam.xposed.FaceWarpEngine
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -39,36 +42,47 @@ import rikka.shizuku.Shizuku
 import java.io.File
 import java.io.FileOutputStream
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), SensorEventListener {
 
     private lateinit var tvShizukuBadge: TextView
     private lateinit var ivLivePreview: ImageView
     private lateinit var tvPreviewOverlayHint: TextView
+    private lateinit var tv6DReadout: TextView
     private lateinit var spinnerFlip: Spinner
     private lateinit var btnZoomMinus: Button
     private lateinit var btnZoomPlus: Button
     private lateinit var tvZoomValue: TextView
     private lateinit var faceDpad: FaceDpadView
+    private lateinit var btnPadMode: Button
     private lateinit var btnAutoMove: Button
+    private lateinit var btnGyro6D: Button
     private lateinit var btnBlink: Button
     private lateinit var btnSmile: Button
     private lateinit var btnIdleToggle: Button
+    private lateinit var seekRoll: SeekBar
+    private lateinit var seekDepthZ: SeekBar
+    private lateinit var btnReset6D: Button
     private lateinit var btnFloatOverlay: Button
     private lateinit var btnUploadPhoto: Button
     private lateinit var btnUploadVideo: Button
     private lateinit var switchEnableVCam: MaterialSwitch
     private lateinit var tvFeedStatus: TextView
-    private lateinit var etReplicateToken: EditText
-    private lateinit var btnLivePortraitAnimate: Button
-    private lateinit var btnGenerateAiPoses: Button
-    private lateinit var btnClearAiPoses: Button
     private lateinit var spinnerApps: Spinner
     private lateinit var btnSyncTarget: Button
     private lateinit var btnOpenLSPatch: Button
     private lateinit var btnReconnectShizuku: Button
 
     private var isSyncingUi = false
+    private var dpadTranslateMode = false
     private var targetApps: List<Pair<String, String>> = emptyList()
+
+    private var sensorManager: SensorManager? = null
+    private var accelSensor: Sensor? = null
+    private var gyroCalibrated = false
+    private var baseGx = 0f
+    private var baseGy = 0f
+    private var baseGz = 0f
+    private var lastSensorPushMs = 0L
 
     private val flipPresets = listOf(
         "270° Front Cam" to Triple(270, false, false),
@@ -79,7 +93,7 @@ class MainActivity : AppCompatActivity() {
         "180° Flip V" to Triple(180, false, true)
     )
 
-    private var previewBank: FacePoseBank? = null
+    private var previewAsset: FacePhotoAsset? = null
     private var previewBitmap: Bitmap? = null
     private var previewPixels: IntArray? = null
     private val previewAnimator = FaceWarpEngine.MotionAnimator()
@@ -97,9 +111,7 @@ class MainActivity : AppCompatActivity() {
     private val shizukuStatusListener: (Boolean) -> Unit = { connected ->
         runOnUiThread {
             tvShizukuBadge.text = if (connected) "● Shizuku Connected" else "● Shizuku Offline"
-            if (connected) {
-                syncUiFromState()
-            }
+            if (connected) syncUiFromState()
         }
     }
 
@@ -134,22 +146,18 @@ class MainActivity : AppCompatActivity() {
             if (uri != null) handlePickedVideo(uri)
         }
 
-    private val pickDrivingVideoLauncher =
-        registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-            if (uri != null) handleLivePortraitWithDrivingVideo(uri)
-        }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+        accelSensor = sensorManager?.getDefaultSensor(Sensor.TYPE_GRAVITY)
+            ?: sensorManager?.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+
         bindViews()
         setupSpinners()
-        setupManualControls()
-        setupSetupAndAiControls()
-
-        val prefs = getSharedPreferences("vcam_prefs", MODE_PRIVATE)
-        etReplicateToken.setText(prefs.getString("replicate_token", ""))
+        setupManual6DControls()
+        setupSourceAndSyncControls()
 
         ShizukuBridge.addStatusListener(shizukuStatusListener)
         ShizukuBridge.addStateListener(stateChangedListener)
@@ -157,7 +165,7 @@ class MainActivity : AppCompatActivity() {
         Shizuku.addBinderReceivedListenerSticky(binderReceivedListener)
         Shizuku.addBinderDeadListener(binderDeadListener)
 
-        reloadLocalPreviewBank()
+        reloadLocalPreviewAsset()
         syncUiFromState()
         checkAndBindShizuku()
     }
@@ -166,24 +174,26 @@ class MainActivity : AppCompatActivity() {
         tvShizukuBadge = findViewById(R.id.tvShizukuBadge)
         ivLivePreview = findViewById(R.id.ivLivePreview)
         tvPreviewOverlayHint = findViewById(R.id.tvPreviewOverlayHint)
+        tv6DReadout = findViewById(R.id.tv6DReadout)
         spinnerFlip = findViewById(R.id.spinnerFlip)
         btnZoomMinus = findViewById(R.id.btnZoomMinus)
         btnZoomPlus = findViewById(R.id.btnZoomPlus)
         tvZoomValue = findViewById(R.id.tvZoomValue)
         faceDpad = findViewById(R.id.faceDpad)
+        btnPadMode = findViewById(R.id.btnPadMode)
         btnAutoMove = findViewById(R.id.btnAutoMove)
+        btnGyro6D = findViewById(R.id.btnGyro6D)
         btnBlink = findViewById(R.id.btnBlink)
         btnSmile = findViewById(R.id.btnSmile)
         btnIdleToggle = findViewById(R.id.btnIdleToggle)
+        seekRoll = findViewById(R.id.seekRoll)
+        seekDepthZ = findViewById(R.id.seekDepthZ)
+        btnReset6D = findViewById(R.id.btnReset6D)
         btnFloatOverlay = findViewById(R.id.btnFloatOverlay)
         btnUploadPhoto = findViewById(R.id.btnUploadPhoto)
         btnUploadVideo = findViewById(R.id.btnUploadVideo)
         switchEnableVCam = findViewById(R.id.switchEnableVCam)
         tvFeedStatus = findViewById(R.id.tvFeedStatus)
-        etReplicateToken = findViewById(R.id.etReplicateToken)
-        btnLivePortraitAnimate = findViewById(R.id.btnLivePortraitAnimate)
-        btnGenerateAiPoses = findViewById(R.id.btnGenerateAiPoses)
-        btnClearAiPoses = findViewById(R.id.btnClearAiPoses)
         spinnerApps = findViewById(R.id.spinnerApps)
         btnSyncTarget = findViewById(R.id.btnSyncTarget)
         btnOpenLSPatch = findViewById(R.id.btnOpenLSPatch)
@@ -256,7 +266,7 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setupManualControls() {
+    private fun setupManual6DControls() {
         btnZoomMinus.setOnClickListener {
             ShizukuBridge.state.zoom = (ShizukuBridge.state.zoom - 0.1f).coerceIn(0.6f, 2.2f)
             ShizukuBridge.pushControlState()
@@ -267,28 +277,84 @@ class MainActivity : AppCompatActivity() {
             ShizukuBridge.pushControlState()
         }
 
-        faceDpad.onDirectionCommand = { zone, yaw, pitch ->
+        btnPadMode.setOnClickListener {
+            dpadTranslateMode = !dpadTranslateMode
+            syncUiFromState()
+        }
+
+        faceDpad.onDirectionCommand = { zone, ax, ay ->
             ShizukuBridge.state.autoSweep = false
+            if (ShizukuBridge.gyro6DEnabled) {
+                ShizukuBridge.gyro6DEnabled = false
+                sensorManager?.unregisterListener(this)
+            }
             when (zone) {
-                FaceDpadView.Zone.CENTER -> {
-                    ShizukuBridge.state.yaw = 0f
-                    ShizukuBridge.state.pitch = 0f
-                    ShizukuBridge.state.smile = 0f
-                }
+                FaceDpadView.Zone.CENTER -> ShizukuBridge.state.reset6D()
                 else -> {
-                    ShizukuBridge.state.yaw = yaw
-                    ShizukuBridge.state.pitch = pitch
+                    if (dpadTranslateMode) {
+                        ShizukuBridge.state.tx = ax
+                        ShizukuBridge.state.ty = ay
+                    } else {
+                        ShizukuBridge.state.yaw = ax
+                        ShizukuBridge.state.pitch = ay
+                    }
                 }
             }
             ShizukuBridge.pushControlState()
         }
 
+        seekRoll.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser || isSyncingUi) return
+                ShizukuBridge.state.autoSweep = false
+                ShizukuBridge.state.roll = (progress - 100) / 100f
+                ShizukuBridge.pushControlState()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        seekDepthZ.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                if (!fromUser || isSyncingUi) return
+                ShizukuBridge.state.autoSweep = false
+                ShizukuBridge.state.tz = (progress - 100) / 100f
+                ShizukuBridge.pushControlState()
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+
+        btnReset6D.setOnClickListener {
+            ShizukuBridge.state.autoSweep = false
+            ShizukuBridge.gyro6DEnabled = false
+            sensorManager?.unregisterListener(this)
+            ShizukuBridge.state.reset6D()
+            ShizukuBridge.pushControlState()
+        }
+
         btnAutoMove.setOnClickListener {
             val next = !ShizukuBridge.state.autoSweep
+            if (next && ShizukuBridge.gyro6DEnabled) {
+                ShizukuBridge.gyro6DEnabled = false
+                sensorManager?.unregisterListener(this)
+            }
             ShizukuBridge.state.autoSweep = next
-            if (!next) {
-                ShizukuBridge.state.yaw = 0f
-                ShizukuBridge.state.pitch = 0f
+            if (!next) ShizukuBridge.state.reset6D()
+            ShizukuBridge.pushControlState()
+        }
+
+        btnGyro6D.setOnClickListener {
+            val next = !ShizukuBridge.gyro6DEnabled
+            ShizukuBridge.gyro6DEnabled = next
+            if (next) {
+                ShizukuBridge.state.autoSweep = false
+                gyroCalibrated = false
+                accelSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+                Toast.makeText(this, "Tilt phone gently to steer 6D head pose!", Toast.LENGTH_SHORT).show()
+            } else {
+                sensorManager?.unregisterListener(this)
+                ShizukuBridge.state.reset6D()
             }
             ShizukuBridge.pushControlState()
         }
@@ -319,12 +385,12 @@ class MainActivity : AppCompatActivity() {
                 )
             } else {
                 startService(Intent(this, FloatingControlService::class.java))
-                Toast.makeText(this, "Floating Manual Menu active! Switch to Brave now.", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "6D Floating Menu active! Switch to Brave now.", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    private fun setupSetupAndAiControls() {
+    private fun setupSourceAndSyncControls() {
         btnReconnectShizuku.setOnClickListener { checkAndBindShizuku() }
 
         btnUploadPhoto.setOnClickListener {
@@ -356,104 +422,9 @@ class MainActivity : AppCompatActivity() {
             ShizukuBridge.pushControlState()
             Toast.makeText(
                 this,
-                if (isChecked) "Virtual Camera ENABLED (${ShizukuBridge.state.mode.uppercase()})" else "Virtual Camera DISABLED",
+                if (isChecked) "Offline 6D Virtual Camera ENABLED" else "Virtual Camera DISABLED",
                 Toast.LENGTH_SHORT
             ).show()
-        }
-
-        // True Photorealistic Human Motion Transfer (LivePortrait AI)
-        btnLivePortraitAnimate.setOnClickListener {
-            val token = etReplicateToken.text.toString().trim()
-            if (token.isBlank()) {
-                Toast.makeText(this, "Paste your Replicate API token (r8_...) first", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-            val localPhoto = File(filesDir, "vcam_photo.jpg")
-            if (!localPhoto.exists()) {
-                Toast.makeText(this, "Upload a Face Photo first!", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            if (ShizukuBridge.service == null) {
-                Toast.makeText(this, "Connect Shizuku first!", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            getSharedPreferences("vcam_prefs", MODE_PRIVATE).edit()
-                .putString("replicate_token", token)
-                .apply()
-
-            Toast.makeText(
-                this,
-                "Pick a short 4-8s real selfie driving video (head turns + blinks)",
-                Toast.LENGTH_LONG
-            ).show()
-            pickDrivingVideoLauncher.launch("video/*")
-        }
-
-        btnGenerateAiPoses.setOnClickListener {
-            val token = etReplicateToken.text.toString().trim()
-            if (token.isBlank()) {
-                Toast.makeText(this, "Paste your Replicate API token (r8_...) first", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
-            val localPhoto = File(filesDir, "vcam_photo.jpg")
-            if (!localPhoto.exists()) {
-                Toast.makeText(this, "Upload a face photo first!", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-            getSharedPreferences("vcam_prefs", MODE_PRIVATE).edit()
-                .putString("replicate_token", token)
-                .apply()
-
-            setAiButtonsEnabled(false)
-            tvFeedStatus.text = "Starting Replicate AI 3D Pose Generator..."
-            lifecycleScope.launch(Dispatchers.IO) {
-                val result = ReplicatePoseClient.generateAllPoses(
-                    apiToken = token,
-                    sourcePhotoFile = localPhoto,
-                    outDir = filesDir
-                ) { progressMsg ->
-                    runOnUiThread { tvFeedStatus.text = progressMsg }
-                }
-
-                if (result.isSuccess) {
-                    val poseFiles = result.getOrDefault(emptyList())
-                    for (pf in poseFiles) {
-                        ShizukuBridge.deployLocalFileSync(pf, pf.name)
-                    }
-                    ShizukuBridge.state.mode = "photo"
-                    ShizukuBridge.state.assetVersion = System.currentTimeMillis()
-                    ShizukuBridge.pushControlState()
-
-                    withContext(Dispatchers.Main) {
-                        reloadLocalPreviewBank()
-                        setAiButtonsEnabled(true)
-                        tvFeedStatus.text = "AI 3D Poses Ready! D-Pad & Auto-Move now blend neural poses."
-                        Toast.makeText(this@MainActivity, "All 6 AI Neural Poses Deployed!", Toast.LENGTH_LONG).show()
-                    }
-                } else {
-                    val err = result.exceptionOrNull()?.message ?: "Unknown error"
-                    withContext(Dispatchers.Main) {
-                        setAiButtonsEnabled(true)
-                        tvFeedStatus.text = "AI Pose Error: $err"
-                    }
-                }
-            }
-        }
-
-        btnClearAiPoses.setOnClickListener {
-            lifecycleScope.launch(Dispatchers.IO) {
-                for (spec in ReplicatePoseClient.DEFAULT_POSES) {
-                    File(filesDir, spec.fileName).delete()
-                }
-                ShizukuBridge.service?.clearAiPoses(ShizukuBridge.activeTargetPackage)
-                ShizukuBridge.state.mode = "photo"
-                ShizukuBridge.state.assetVersion = System.currentTimeMillis()
-                ShizukuBridge.pushControlState()
-                withContext(Dispatchers.Main) {
-                    reloadLocalPreviewBank()
-                    tvFeedStatus.text = "Reset to Human-Motion Photo Mode."
-                }
-            }
         }
 
         btnSyncTarget.setOnClickListener {
@@ -463,13 +434,13 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
             val pkg = ShizukuBridge.activeTargetPackage
-            tvFeedStatus.text = "Syncing assets & controls to $pkg..."
+            tvFeedStatus.text = "Syncing photo & 6D controls to $pkg..."
             lifecycleScope.launch(Dispatchers.IO) {
                 svc.writeControlState(ShizukuBridge.state.serialize(), pkg)
                 val res = svc.prepareAndRestartPackage(pkg)
                 withContext(Dispatchers.Main) {
                     tvFeedStatus.text = if (res == "OK") {
-                        "Synced to $pkg! Launch Float Menu, then open $pkg."
+                        "Synced to $pkg! Launch 6D Float Menu, then open $pkg."
                     } else {
                         "Sync warning: $res"
                     }
@@ -488,77 +459,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun setAiButtonsEnabled(enabled: Boolean) {
-        btnLivePortraitAnimate.isEnabled = enabled
-        btnGenerateAiPoses.isEnabled = enabled
-    }
-
-    private fun handleLivePortraitWithDrivingVideo(drivingUri: Uri) {
-        val token = etReplicateToken.text.toString().trim()
-        val localPhoto = File(filesDir, "vcam_photo.jpg")
-        setAiButtonsEnabled(false)
-        tvFeedStatus.text = "Preparing driving video for LivePortrait AI..."
-
-        lifecycleScope.launch(Dispatchers.IO) {
-            val drivingCache = File(cacheDir, "driving_input.mp4")
-            val outputVideo = File(filesDir, "liveportrait_output.mp4")
-            try {
-                contentResolver.openInputStream(drivingUri)?.use { input ->
-                    FileOutputStream(drivingCache).use { output ->
-                        input.copyTo(output, bufferSize = 65536)
-                    }
-                } ?: throw IllegalStateException("Cannot read driving video")
-
-                val res = ReplicatePoseClient.generateLivePortraitVideo(
-                    apiToken = token,
-                    sourcePhotoFile = localPhoto,
-                    drivingVideoFile = drivingCache,
-                    outVideoFile = outputVideo
-                ) { statusMsg ->
-                    runOnUiThread { tvFeedStatus.text = statusMsg }
-                }
-
-                drivingCache.delete()
-
-                if (res.isSuccess) {
-                    runOnUiThread { tvFeedStatus.text = "Deploying photorealistic video via Shizuku..." }
-                    val deployRes = ShizukuBridge.deployLocalFileSync(outputVideo, "vcam_feed.mp4")
-                    if (deployRes == "OK") {
-                        ShizukuBridge.state.mode = "video"
-                        ShizukuBridge.state.enabled = true
-                        ShizukuBridge.state.assetVersion = System.currentTimeMillis()
-                        ShizukuBridge.pushControlState()
-                        withContext(Dispatchers.Main) {
-                            setAiButtonsEnabled(true)
-                            syncUiFromState()
-                            tvFeedStatus.text = "LivePortrait Video LIVE! Tap Sync to Target App & open Brave."
-                            Toast.makeText(this@MainActivity, "Photorealistic Human Motion Deployed!", Toast.LENGTH_LONG).show()
-                        }
-                    } else {
-                        withContext(Dispatchers.Main) {
-                            setAiButtonsEnabled(true)
-                            tvFeedStatus.text = "Shizuku deploy error: $deployRes"
-                        }
-                    }
-                } else {
-                    val err = res.exceptionOrNull()?.message ?: "Unknown error"
-                    withContext(Dispatchers.Main) {
-                        setAiButtonsEnabled(true)
-                        tvFeedStatus.text = "LivePortrait Error: $err"
-                    }
-                }
-            } catch (e: Exception) {
-                drivingCache.delete()
-                withContext(Dispatchers.Main) {
-                    setAiButtonsEnabled(true)
-                    tvFeedStatus.text = "LivePortrait Error: ${e.message}"
-                }
-            }
+    override fun onSensorChanged(event: SensorEvent) {
+        if (!ShizukuBridge.gyro6DEnabled) return
+        val gx = event.values[0]
+        val gy = event.values[1]
+        val gz = event.values[2]
+        if (!gyroCalibrated) {
+            baseGx = gx; baseGy = gy; baseGz = gz
+            gyroCalibrated = true
+            return
         }
+        val now = System.currentTimeMillis()
+        if (now - lastSensorPushMs < 50L) return
+        lastSensorPushMs = now
+
+        val dx = gx - baseGx
+        val dy = gy - baseGy
+        val dz = gz - baseGz
+
+        ShizukuBridge.state.yaw = (-dx / 4.2f).coerceIn(-1f, 1f)
+        ShizukuBridge.state.pitch = (-dy / 4.2f).coerceIn(-1f, 1f)
+        ShizukuBridge.state.roll = (dx / 6.5f).coerceIn(-1f, 1f)
+        ShizukuBridge.state.tx = (-dx / 8.0f).coerceIn(-0.6f, 0.6f)
+        ShizukuBridge.state.ty = (-dy / 8.0f).coerceIn(-0.6f, 0.6f)
+        ShizukuBridge.state.tz = (dz / 5.5f).coerceIn(-0.7f, 0.7f)
+        ShizukuBridge.pushControlState()
     }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun handlePickedPhoto(uri: Uri) {
-        tvFeedStatus.text = "Processing face photo & detecting eyes..."
+        tvFeedStatus.text = "Building offline 3D face depth relief..."
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 val inputStream = contentResolver.openInputStream(uri)
@@ -583,27 +514,21 @@ class MainActivity : AppCompatActivity() {
                 }
                 cleanBmp.recycle()
 
-                for (spec in ReplicatePoseClient.DEFAULT_POSES) {
-                    File(filesDir, spec.fileName).delete()
-                }
-                ShizukuBridge.service?.clearAiPoses(ShizukuBridge.activeTargetPackage)
-
                 val res = ShizukuBridge.deployLocalFileSync(localPhoto, "vcam_photo.jpg")
                 if (res == "OK") {
                     ShizukuBridge.state.mode = "photo"
                     ShizukuBridge.state.enabled = true
-                    ShizukuBridge.state.yaw = 0f
-                    ShizukuBridge.state.pitch = 0f
+                    ShizukuBridge.state.reset6D()
                     ShizukuBridge.state.assetVersion = System.currentTimeMillis()
                     ShizukuBridge.pushControlState()
                 }
 
                 withContext(Dispatchers.Main) {
                     if (res == "OK") {
-                        reloadLocalPreviewBank()
+                        reloadLocalPreviewAsset()
                         syncUiFromState()
-                        tvFeedStatus.text = "Face Photo Deployed! Use Auto-Move, D-Pad, or LivePortrait AI below."
-                        Toast.makeText(this@MainActivity, "Face Photo Live & Ready!", Toast.LENGTH_SHORT).show()
+                        tvFeedStatus.text = "Offline 6D Face Ready! Test D-Pad/Gyro or tap Sync for Brave."
+                        Toast.makeText(this@MainActivity, "Offline 6D Face Ready!", Toast.LENGTH_SHORT).show()
                     } else {
                         tvFeedStatus.text = "Deploy failed: $res"
                     }
@@ -674,34 +599,43 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun reloadLocalPreviewBank() {
+    private fun reloadLocalPreviewAsset() {
         val localPhoto = File(filesDir, "vcam_photo.jpg")
         if (!localPhoto.exists()) {
-            previewBank = null
+            previewAsset = null
             tvPreviewOverlayHint.visibility = View.VISIBLE
             return
         }
-        val bank = FaceWarpEngine.loadPoseBank(
+        val asset = FaceWarpEngine.loadPhotoAsset(
             basePath = localPhoto.absolutePath,
-            poseDir = filesDir,
             maxDim = 240,
             includeArgb = true
         )
-        previewBank = bank
-        if (bank != null) {
-            previewBitmap = Bitmap.createBitmap(bank.width, bank.height, Bitmap.Config.ARGB_8888)
-            previewPixels = IntArray(bank.width * bank.height)
+        previewAsset = asset
+        if (asset != null) {
+            previewBitmap = Bitmap.createBitmap(asset.width, asset.height, Bitmap.Config.ARGB_8888)
+            previewPixels = IntArray(asset.width * asset.height)
             tvPreviewOverlayHint.visibility = View.GONE
         }
     }
 
     private fun renderPreviewFrame() {
-        val bank = previewBank ?: return
+        val asset = previewAsset ?: return
         val bmp = previewBitmap ?: return
         val px = previewPixels ?: return
-        previewAnimator.renderPreviewPixels(bank, ShizukuBridge.state, System.currentTimeMillis(), px)
-        bmp.setPixels(px, 0, bank.width, 0, 0, bank.width, bank.height)
+        previewAnimator.renderPreviewPixels(asset, ShizukuBridge.state, System.currentTimeMillis(), px)
+        bmp.setPixels(px, 0, asset.width, 0, 0, asset.width, asset.height)
         ivLivePreview.setImageBitmap(bmp)
+    }
+
+    private fun styleToggle(btn: Button, active: Boolean, onText: String, offText: String) {
+        btn.text = if (active) onText else offText
+        btn.backgroundTintList = ColorStateList.valueOf(
+            if (active) Color.parseColor("#1DB954") else Color.parseColor("#082418")
+        )
+        btn.setTextColor(
+            if (active) Color.parseColor("#041F13") else Color.parseColor("#2EE87A")
+        )
     }
 
     private fun syncUiFromState() {
@@ -709,15 +643,19 @@ class MainActivity : AppCompatActivity() {
         isSyncingUi = true
         switchEnableVCam.isChecked = st.enabled
         tvZoomValue.text = String.format("%.1fx", st.zoom)
-        btnAutoMove.text = if (st.autoSweep) "Auto-Move: ON" else "Auto-Move: OFF"
-        btnAutoMove.backgroundTintList = ColorStateList.valueOf(
-            if (st.autoSweep) Color.parseColor("#1DB954") else Color.parseColor("#082418")
+        tv6DReadout.text = String.format(
+            "6D  Y:%.0f°  P:%.0f°  R:%.0f°  |  X:%.2f  Y:%.2f  Z:%.2f",
+            st.yaw * 19.5f, st.pitch * 16f, st.roll * 17f, st.tx, st.ty, st.tz
         )
-        btnAutoMove.setTextColor(
-            if (st.autoSweep) Color.parseColor("#041F13") else Color.parseColor("#2EE87A")
-        )
+        seekRoll.progress = ((st.roll + 1f) * 100f).toInt().coerceIn(0, 200)
+        seekDepthZ.progress = ((st.tz + 1f) * 100f).toInt().coerceIn(0, 200)
+
+        styleToggle(btnPadMode, dpadTranslateMode, "Pad: Move X/Y", "Pad: Rotate 3D")
+        styleToggle(btnAutoMove, st.autoSweep, "6D Auto: ON", "6D Auto: OFF")
+        styleToggle(btnGyro6D, ShizukuBridge.gyro6DEnabled, "Gyro 6D: ON", "Gyro 6D: OFF")
         btnIdleToggle.text = if (st.autoIdle) "Idle: ON" else "Idle: OFF"
         btnSmile.text = if (st.smile > 0.3f) "Smile: ON" else "Smile"
+
         val presetIdx = flipPresets.indexOfFirst { (_, triple) ->
             triple.first == st.rotation && triple.second == st.flipH && triple.third == st.flipV
         }
@@ -742,6 +680,9 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         isPreviewTicking = true
         mainHandler.post(previewTicker)
+        if (ShizukuBridge.gyro6DEnabled) {
+            accelSensor?.let { sensorManager?.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME) }
+        }
         if (ShizukuBridge.isBound) {
             tvShizukuBadge.text = "● Shizuku Connected"
         }
@@ -751,10 +692,12 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
         isPreviewTicking = false
         mainHandler.removeCallbacks(previewTicker)
+        sensorManager?.unregisterListener(this)
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        sensorManager?.unregisterListener(this)
         ShizukuBridge.removeStatusListener(shizukuStatusListener)
         ShizukuBridge.removeStateListener(stateChangedListener)
         Shizuku.removeRequestPermissionResultListener(permissionResultListener)

@@ -25,6 +25,9 @@ object ShizukuBridge {
     @Volatile
     var activeTargetPackage: String = "com.brave.browser"
 
+    @Volatile
+    var gyro6DEnabled: Boolean = false
+
     val state: ControlState = ControlState()
 
     private val ioExecutor = Executors.newSingleThreadExecutor()

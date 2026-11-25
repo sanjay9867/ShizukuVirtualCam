@@ -10,5 +10,4 @@ interface IShellService {
     String readControlState() = 4;
     boolean hasDeployedFile(String fileName) = 5;
     String prepareAndRestartPackage(String packageName) = 6;
-    boolean clearAiPoses(String activePackage) = 7;
 }

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:layout_width="216dp"
+    android:layout_width="224dp"
     android:layout_height="wrap_content"
     android:background="@drawable/bg_card_panel"
     android:orientation="vertical"
@@ -19,7 +19,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Manual Mode"
+            android:text="6D Offline Menu"
             android:textColor="#FFFFFF"
             android:textSize="13sp"
             android:textStyle="bold" />
@@ -54,52 +54,111 @@
 
         <com.sanjay.shizukuvcam.ui.FaceDpadView
             android:id="@+id/overlayDpad"
-            android:layout_width="156dp"
-            android:layout_height="156dp"
-            android:layout_marginBottom="8dp" />
+            android:layout_width="154dp"
+            android:layout_height="154dp"
+            android:layout_marginBottom="6dp" />
 
+        <!-- Roll Left/Right & Depth Z-/Z+ -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:orientation="horizontal"
-            android:layout_marginBottom="6dp">
+            android:layout_marginBottom="5dp">
 
             <Button
-                android:id="@+id/btnOverlayZoomOut"
+                android:id="@+id/btnOverlayRollLeft"
                 android:layout_width="0dp"
-                android:layout_height="36dp"
+                android:layout_height="34dp"
                 android:layout_weight="1"
-                android:layout_marginEnd="4dp"
+                android:layout_marginEnd="3dp"
+                android:backgroundTint="#082418"
+                android:padding="0dp"
+                android:text="↶ R"
+                android:textColor="#2EE87A"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btnOverlayRollRight"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="3dp"
+                android:backgroundTint="#082418"
+                android:padding="0dp"
+                android:text="R ↷"
+                android:textColor="#2EE87A"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btnOverlayDepthOut"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1"
+                android:layout_marginEnd="3dp"
                 android:backgroundTint="#082418"
                 android:padding="0dp"
                 android:text="Z −"
                 android:textColor="#2EE87A"
-                android:textSize="12sp" />
+                android:textSize="11sp" />
 
             <Button
-                android:id="@+id/btnOverlayZoomIn"
+                android:id="@+id/btnOverlayDepthIn"
                 android:layout_width="0dp"
-                android:layout_height="36dp"
+                android:layout_height="34dp"
                 android:layout_weight="1"
-                android:layout_marginEnd="4dp"
                 android:backgroundTint="#082418"
                 android:padding="0dp"
                 android:text="Z +"
                 android:textColor="#2EE87A"
-                android:textSize="12sp" />
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <!-- Axis Switch + Flip + Blink -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:layout_marginBottom="5dp">
+
+            <Button
+                android:id="@+id/btnOverlayAxisMode"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1.6"
+                android:layout_marginEnd="3dp"
+                android:backgroundTint="#082418"
+                android:padding="0dp"
+                android:text="Pad: Rot 3D"
+                android:textColor="#2EE87A"
+                android:textSize="10sp"
+                android:textStyle="bold" />
 
             <Button
                 android:id="@+id/btnOverlayFlip"
                 android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1"
+                android:layout_height="34dp"
+                android:layout_weight="0.9"
+                android:layout_marginEnd="3dp"
                 android:backgroundTint="#082418"
                 android:padding="0dp"
                 android:text="Flip"
                 android:textColor="#2EE87A"
-                android:textSize="12sp" />
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/btnOverlayBlink"
+                android:layout_width="0dp"
+                android:layout_height="34dp"
+                android:layout_weight="1"
+                android:backgroundTint="#1DB954"
+                android:padding="0dp"
+                android:text="Blink"
+                android:textColor="#041F13"
+                android:textSize="11sp"
+                android:textStyle="bold" />
         </LinearLayout>
 
+        <!-- 6D Auto + Gyro 6D -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -108,26 +167,26 @@
             <Button
                 android:id="@+id/btnOverlayAutoMove"
                 android:layout_width="0dp"
-                android:layout_height="36dp"
-                android:layout_weight="1.3"
+                android:layout_height="34dp"
+                android:layout_weight="1"
                 android:layout_marginEnd="4dp"
                 android:backgroundTint="#082418"
                 android:padding="0dp"
-                android:text="Auto: OFF"
+                android:text="6D Auto"
                 android:textColor="#2EE87A"
                 android:textSize="11sp"
                 android:textStyle="bold" />
 
             <Button
-                android:id="@+id/btnOverlayBlink"
+                android:id="@+id/btnOverlayGyro"
                 android:layout_width="0dp"
-                android:layout_height="36dp"
+                android:layout_height="34dp"
                 android:layout_weight="1"
-                android:backgroundTint="#1DB954"
+                android:backgroundTint="#082418"
                 android:padding="0dp"
-                android:text="Blink"
-                android:textColor="#041F13"
-                android:textSize="12sp"
+                android:text="Gyro 6D"
+                android:textColor="#2EE87A"
+                android:textSize="11sp"
                 android:textStyle="bold" />
         </LinearLayout>
     </LinearLayout>

@@ -18,13 +18,13 @@
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:layout_marginBottom="12dp">
+            android:layout_marginBottom="10dp">
 
             <TextView
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Manual Mode v2.2"
+                android:text="6D Offline Mode"
                 android:textColor="#FFFFFF"
                 android:textSize="24sp"
                 android:textStyle="bold" />
@@ -44,11 +44,11 @@
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <!-- Live Animated Preview Frame -->
+        <!-- Live 6D Animated Preview Frame -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
-            android:layout_height="260dp"
-            android:layout_marginBottom="16dp"
+            android:layout_height="250dp"
+            android:layout_marginBottom="8dp"
             app:cardBackgroundColor="#082418"
             app:cardCornerRadius="20dp"
             app:cardElevation="4dp"
@@ -64,7 +64,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
                     android:scaleType="centerCrop"
-                    android:contentDescription="Live Virtual Face Preview" />
+                    android:contentDescription="Live 6D Face Preview" />
 
                 <TextView
                     android:id="@+id/tvPreviewOverlayHint"
@@ -74,28 +74,42 @@
                     android:gravity="center"
                     android:padding="16dp"
                     android:text="Upload a Face Photo below
-to activate Live Manual Mode"
+100% Offline 6D Depth-Relief Engine"
                     android:textColor="#A8DFC2"
-                    android:textSize="15sp" />
+                    android:textSize="14sp" />
             </FrameLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Flip + Zoom Control Row -->
+        <!-- Live 6D Telemetry Strip -->
+        <TextView
+            android:id="@+id/tv6DReadout"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="12dp"
+            android:background="@drawable/bg_pill_dark"
+            android:gravity="center"
+            android:padding="6dp"
+            android:text="6D  Y:0°  P:0°  R:0°  |  X:0.00  Y:0.00  Z:0.00"
+            android:textColor="#A5F3C4"
+            android:textSize="11sp"
+            android:textStyle="bold" />
+
+        <!-- Flip + Zoom Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:layout_marginBottom="16dp">
+            android:layout_marginBottom="14dp">
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Flip"
                 android:textColor="#FFFFFF"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold"
-                android:layout_marginEnd="8dp" />
+                android:layout_marginEnd="6dp" />
 
             <Spinner
                 android:id="@+id/spinnerFlip"
@@ -105,14 +119,14 @@ to activate Live Manual Mode"
                 android:background="@drawable/bg_pill_dark"
                 android:paddingStart="10dp"
                 android:paddingEnd="10dp"
-                android:layout_marginEnd="12dp" />
+                android:layout_marginEnd="10dp" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Zoom"
                 android:textColor="#FFFFFF"
-                android:textSize="16sp"
+                android:textSize="15sp"
                 android:textStyle="bold"
                 android:layout_marginEnd="6dp" />
 
@@ -128,7 +142,7 @@ to activate Live Manual Mode"
                 <Button
                     android:id="@+id/btnZoomMinus"
                     style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="40dp"
+                    android:layout_width="38dp"
                     android:layout_height="40dp"
                     android:minWidth="0dp"
                     android:padding="0dp"
@@ -142,14 +156,12 @@ to activate Live Manual Mode"
                     android:layout_height="wrap_content"
                     android:text="1.0x"
                     android:textColor="#D9F9E6"
-                    android:textSize="12sp"
-                    android:paddingStart="2dp"
-                    android:paddingEnd="2dp" />
+                    android:textSize="12sp" />
 
                 <Button
                     android:id="@+id/btnZoomPlus"
                     style="@style/Widget.Material3.Button.TextButton"
-                    android:layout_width="40dp"
+                    android:layout_width="38dp"
                     android:layout_height="40dp"
                     android:minWidth="0dp"
                     android:padding="0dp"
@@ -159,13 +171,13 @@ to activate Live Manual Mode"
             </LinearLayout>
         </LinearLayout>
 
-        <!-- Face Movement Circular D-Pad Section -->
+        <!-- 6D D-Pad + Mode Controls -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"
             android:orientation="horizontal"
-            android:layout_marginBottom="14dp">
+            android:layout_marginBottom="12dp">
 
             <LinearLayout
                 android:layout_width="0dp"
@@ -174,61 +186,150 @@ to activate Live Manual Mode"
                 android:orientation="vertical"
                 android:paddingEnd="8dp">
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Face
-Movement"
-                    android:textColor="#FFFFFF"
-                    android:textSize="20sp"
+                <Button
+                    android:id="@+id/btnPadMode"
+                    android:layout_width="match_parent"
+                    android:layout_height="38dp"
+                    android:backgroundTint="#082418"
+                    android:text="Pad: Rotate 3D"
+                    android:textColor="#2EE87A"
+                    android:textSize="11sp"
                     android:textStyle="bold"
-                    android:layout_marginBottom="8dp" />
+                    android:layout_marginBottom="5dp" />
 
                 <Button
                     android:id="@+id/btnAutoMove"
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
+                    android:layout_height="38dp"
                     android:backgroundTint="#082418"
-                    android:text="Auto-Move: OFF"
+                    android:text="6D Auto: OFF"
                     android:textColor="#2EE87A"
-                    android:textSize="12sp"
+                    android:textSize="11sp"
                     android:textStyle="bold"
                     android:layout_marginBottom="5dp" />
 
                 <Button
-                    android:id="@+id/btnBlink"
+                    android:id="@+id/btnGyro6D"
                     android:layout_width="match_parent"
                     android:layout_height="38dp"
                     android:backgroundTint="#082418"
-                    android:text="Blink"
+                    android:text="Gyro 6D: OFF"
                     android:textColor="#2EE87A"
-                    android:textSize="12sp"
+                    android:textSize="11sp"
+                    android:textStyle="bold"
                     android:layout_marginBottom="5dp" />
 
-                <Button
-                    android:id="@+id/btnSmile"
+                <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="38dp"
-                    android:backgroundTint="#082418"
-                    android:text="Smile"
-                    android:textColor="#2EE87A"
-                    android:textSize="12sp"
-                    android:layout_marginBottom="5dp" />
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="5dp">
+
+                    <Button
+                        android:id="@+id/btnBlink"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:layout_marginEnd="4dp"
+                        android:backgroundTint="#082418"
+                        android:padding="0dp"
+                        android:text="Blink"
+                        android:textColor="#2EE87A"
+                        android:textSize="11sp" />
+
+                    <Button
+                        android:id="@+id/btnSmile"
+                        android:layout_width="0dp"
+                        android:layout_height="36dp"
+                        android:layout_weight="1"
+                        android:backgroundTint="#082418"
+                        android:padding="0dp"
+                        android:text="Smile"
+                        android:textColor="#2EE87A"
+                        android:textSize="11sp" />
+                </LinearLayout>
 
                 <Button
                     android:id="@+id/btnIdleToggle"
                     android:layout_width="match_parent"
-                    android:layout_height="38dp"
+                    android:layout_height="36dp"
                     android:backgroundTint="#082418"
                     android:text="Idle: ON"
                     android:textColor="#D9F9E6"
-                    android:textSize="12sp" />
+                    android:textSize="11sp" />
             </LinearLayout>
 
             <com.sanjay.shizukuvcam.ui.FaceDpadView
                 android:id="@+id/faceDpad"
-                android:layout_width="186dp"
-                android:layout_height="186dp" />
+                android:layout_width="184dp"
+                android:layout_height="184dp" />
+        </LinearLayout>
+
+        <!-- Roll + Depth Z Sliders (Completes All 6 Axes) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@drawable/bg_card_panel"
+            android:orientation="vertical"
+            android:padding="12dp"
+            android:layout_marginBottom="12dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <TextView
+                    android:layout_width="76dp"
+                    android:layout_height="wrap_content"
+                    android:text="Head Roll"
+                    android:textColor="#D9F9E6"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <SeekBar
+                    android:id="@+id/seekRoll"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="200"
+                    android:progress="100" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:layout_marginTop="6dp">
+
+                <TextView
+                    android:layout_width="76dp"
+                    android:layout_height="wrap_content"
+                    android:text="3D Depth Z"
+                    android:textColor="#D9F9E6"
+                    android:textSize="12sp"
+                    android:textStyle="bold" />
+
+                <SeekBar
+                    android:id="@+id/seekDepthZ"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:max="200"
+                    android:progress="100" />
+            </LinearLayout>
+
+            <Button
+                android:id="@+id/btnReset6D"
+                android:layout_width="match_parent"
+                android:layout_height="38dp"
+                android:layout_marginTop="8dp"
+                android:backgroundTint="#082418"
+                android:text="Reset All 6 Axes to Center"
+                android:textColor="#2EE87A"
+                android:textSize="12sp" />
         </LinearLayout>
 
         <!-- Launch Floating Menu Over Brave -->
@@ -236,13 +337,13 @@ Movement"
             android:id="@+id/btnFloatOverlay"
             android:layout_width="match_parent"
             android:layout_height="48dp"
-            android:layout_marginBottom="16dp"
+            android:layout_marginBottom="14dp"
             android:backgroundTint="#1DB954"
-            android:text="Launch Floating Menu (Control Over Brave)"
+            android:text="Launch 6D Floating Menu (Over Brave)"
             android:textColor="#041F13"
             android:textStyle="bold" />
 
-        <!-- Upload Photo / Video & Live Switch Panel -->
+        <!-- Source Panel -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -254,7 +355,7 @@ Movement"
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="1. Face Photo / Video Source"
+                android:text="1. Offline Face Photo / Video Source"
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
                 android:textStyle="bold" />
@@ -265,7 +366,7 @@ Movement"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="4dp"
                 android:layout_marginBottom="10dp"
-                android:text="Status: Upload a face photo or MP4 video"
+                android:text="Status: 100% Offline Ready — Upload a face photo or MP4"
                 android:textColor="#B9EBD0"
                 android:textSize="13sp" />
 
@@ -306,82 +407,6 @@ Movement"
                 android:textSize="15sp" />
         </LinearLayout>
 
-        <!-- Cloud AI Neural Studio (LivePortrait + Expression Editor) -->
-        <LinearLayout
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@drawable/bg_card_panel"
-            android:orientation="vertical"
-            android:padding="14dp"
-            android:layout_marginBottom="14dp">
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="2. True Human-Motion AI Studio (Replicate)"
-                android:textColor="#FFFFFF"
-                android:textSize="16sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="4dp"
-                android:text="Best Realism: Upload your Face Photo above, paste a Replicate token, and transfer real human head turns &amp; blinks from a short selfie video using LivePortrait AI."
-                android:textColor="#B9EBD0"
-                android:textSize="12sp" />
-
-            <EditText
-                android:id="@+id/etReplicateToken"
-                android:layout_width="match_parent"
-                android:layout_height="46dp"
-                android:layout_marginTop="8dp"
-                android:background="@drawable/bg_pill_dark"
-                android:hint="r8_your_replicate_api_token"
-                android:inputType="textPassword"
-                android:paddingStart="14dp"
-                android:paddingEnd="14dp"
-                android:textColor="#FFFFFF"
-                android:textColorHint="#6EA98C"
-                android:textSize="14sp" />
-
-            <Button
-                android:id="@+id/btnLivePortraitAnimate"
-                android:layout_width="match_parent"
-                android:layout_height="46dp"
-                android:layout_marginTop="8dp"
-                android:backgroundTint="#1DB954"
-                android:text="LivePortrait AI: Animate Photo w/ Real Video"
-                android:textColor="#041F13"
-                android:textStyle="bold" />
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:layout_marginTop="8dp"
-                android:orientation="horizontal">
-
-                <Button
-                    android:id="@+id/btnGenerateAiPoses"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="2"
-                    android:layout_marginEnd="6dp"
-                    android:backgroundTint="#082418"
-                    android:text="Generate 6 D-Pad Poses"
-                    android:textColor="#2EE87A" />
-
-                <Button
-                    android:id="@+id/btnClearAiPoses"
-                    android:layout_width="0dp"
-                    android:layout_height="wrap_content"
-                    android:layout_weight="1"
-                    android:backgroundTint="#082418"
-                    android:text="Reset"
-                    android:textColor="#FF9E9E" />
-            </LinearLayout>
-        </LinearLayout>
-
         <!-- Target App Sync & Shizuku Panel -->
         <LinearLayout
             android:layout_width="match_parent"
@@ -393,7 +418,7 @@ Movement"
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="3. Target App &amp; Shizuku Sync"
+                android:text="2. Target App &amp; Shizuku Sync"
                 android:textColor="#FFFFFF"
                 android:textSize="16sp"
                 android:textStyle="bold" />

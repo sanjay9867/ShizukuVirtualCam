@@ -2,24 +2,41 @@ package com.sanjay.shizukuvcam.xposed
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import java.io.File
 import kotlin.math.abs
 import kotlin.math.cos
+import kotlin.math.exp
 import kotlin.math.sin
+import kotlin.math.sqrt
 
+/**
+ * Full 6DoF (6-Axis) Offline State:
+ *  - Rotation: yaw (-1..+1), pitch (-1..+1), roll (-1..+1)
+ *  - Translation: tx (-1..+1), ty (-1..+1), tz (-1..+1 depth closer/farther)
+ */
 class ControlState {
     @Volatile var enabled: Boolean = false
     @Volatile var mode: String = "photo" // "photo" or "video"
-    @Volatile var yaw: Float = 0f        // -1f (left) .. +1f (right)
-    @Volatile var pitch: Float = 0f      // -1f (down) .. +1f (up)
-    @Volatile var zoom: Float = 1.0f     // 0.6f .. 2.2f
+
+    // 3 Rotational axes (3DoF)
+    @Volatile var yaw: Float = 0f        // Left (-) .. Right (+)
+    @Volatile var pitch: Float = 0f      // Down (-) .. Up (+)
+    @Volatile var roll: Float = 0f       // Tilt Left (-) .. Tilt Right (+)
+
+    // 3 Translational axes (3DoF -> total 6DoF / 6D)
+    @Volatile var tx: Float = 0f         // Shift Left (-) .. Right (+)
+    @Volatile var ty: Float = 0f         // Shift Down (-) .. Up (+)
+    @Volatile var tz: Float = 0f         // Pull Back (-) .. Push Closer (+) with 3D perspective
+
+    @Volatile var zoom: Float = 1.0f
     @Volatile var flipH: Boolean = false
     @Volatile var flipV: Boolean = false
-    @Volatile var rotation: Int = 270    // 0, 90, 180, 270
+    @Volatile var rotation: Int = 270
     @Volatile var blinkSeq: Long = 0L
-    @Volatile var smile: Float = 0f      // 0f .. 1f
+    @Volatile var smile: Float = 0f
     @Volatile var autoIdle: Boolean = true
     @Volatile var autoSweep: Boolean = false
+
+    // Detected facial geometry anchors
     @Volatile var faceCx: Float = 0.50f
     @Volatile var faceCy: Float = 0.48f
     @Volatile var faceR: Float = 0.22f
@@ -29,29 +46,43 @@ class ControlState {
     @Volatile var eyeRy: Float = 0.43f
     @Volatile var assetVersion: Long = 1L
 
+    fun reset6D() {
+        yaw = 0f
+        pitch = 0f
+        roll = 0f
+        tx = 0f
+        ty = 0f
+        tz = 0f
+        smile = 0f
+    }
+
     fun serialize(): String {
-        return buildString {
-            append("enabled=").append(if (enabled) "1" else "0").append('\n')
-            append("mode=").append(mode).append('\n')
-            append("yaw=").append(yaw).append('\n')
-            append("pitch=").append(pitch).append('\n')
-            append("zoom=").append(zoom).append('\n')
-            append("flip_h=").append(if (flipH) "1" else "0").append('\n')
-            append("flip_v=").append(if (flipV) "1" else "0").append('\n')
-            append("rotation=").append(rotation).append('\n')
-            append("blink_seq=").append(blinkSeq).append('\n')
-            append("smile=").append(smile).append('\n')
-            append("auto_idle=").append(if (autoIdle) "1" else "0").append('\n')
-            append("auto_sweep=").append(if (autoSweep) "1" else "0").append('\n')
-            append("face_cx=").append(faceCx).append('\n')
-            append("face_cy=").append(faceCy).append('\n')
-            append("face_r=").append(faceR).append('\n')
-            append("eye_lx=").append(eyeLx).append('\n')
-            append("eye_ly=").append(eyeLy).append('\n')
-            append("eye_rx=").append(eyeRx).append('\n')
-            append("eye_ry=").append(eyeRy).append('\n')
-            append("ver=").append(assetVersion).append('\n')
-        }
+        val sb = StringBuilder(384)
+        sb.append("enabled=").append(if (enabled) "1" else "0").append('\n')
+        sb.append("mode=").append(mode).append('\n')
+        sb.append("yaw=").append(yaw).append('\n')
+        sb.append("pitch=").append(pitch).append('\n')
+        sb.append("roll=").append(roll).append('\n')
+        sb.append("tx=").append(tx).append('\n')
+        sb.append("ty=").append(ty).append('\n')
+        sb.append("tz=").append(tz).append('\n')
+        sb.append("zoom=").append(zoom).append('\n')
+        sb.append("flip_h=").append(if (flipH) "1" else "0").append('\n')
+        sb.append("flip_v=").append(if (flipV) "1" else "0").append('\n')
+        sb.append("rotation=").append(rotation).append('\n')
+        sb.append("blink_seq=").append(blinkSeq).append('\n')
+        sb.append("smile=").append(smile).append('\n')
+        sb.append("auto_idle=").append(if (autoIdle) "1" else "0").append('\n')
+        sb.append("auto_sweep=").append(if (autoSweep) "1" else "0").append('\n')
+        sb.append("face_cx=").append(faceCx).append('\n')
+        sb.append("face_cy=").append(faceCy).append('\n')
+        sb.append("face_r=").append(faceR).append('\n')
+        sb.append("eye_lx=").append(eyeLx).append('\n')
+        sb.append("eye_ly=").append(eyeLy).append('\n')
+        sb.append("eye_rx=").append(eyeRx).append('\n')
+        sb.append("eye_ry=").append(eyeRy).append('\n')
+        sb.append("ver=").append(assetVersion).append('\n')
+        return sb.toString()
     }
 
     fun copyFrom(other: ControlState) {
@@ -59,6 +90,10 @@ class ControlState {
         mode = other.mode
         yaw = other.yaw
         pitch = other.pitch
+        roll = other.roll
+        tx = other.tx
+        ty = other.ty
+        tz = other.tz
         zoom = other.zoom
         flipH = other.flipH
         flipV = other.flipV
@@ -91,6 +126,10 @@ class ControlState {
                     "mode" -> state.mode = if (value == "video") "video" else "photo"
                     "yaw" -> state.yaw = (value.toFloatOrNull() ?: 0f).coerceIn(-1f, 1f)
                     "pitch" -> state.pitch = (value.toFloatOrNull() ?: 0f).coerceIn(-1f, 1f)
+                    "roll" -> state.roll = (value.toFloatOrNull() ?: 0f).coerceIn(-1f, 1f)
+                    "tx" -> state.tx = (value.toFloatOrNull() ?: 0f).coerceIn(-1f, 1f)
+                    "ty" -> state.ty = (value.toFloatOrNull() ?: 0f).coerceIn(-1f, 1f)
+                    "tz" -> state.tz = (value.toFloatOrNull() ?: 0f).coerceIn(-1f, 1f)
                     "zoom" -> state.zoom = (value.toFloatOrNull() ?: 1f).coerceIn(0.6f, 2.2f)
                     "flip_h" -> state.flipH = value == "1"
                     "flip_v" -> state.flipV = value == "1"
@@ -126,36 +165,23 @@ class YuvFrame(
     @Volatile var seq: Long = 0L
 )
 
-class FacePoseBank(
+class FacePhotoAsset(
     val width: Int,
     val height: Int,
     val baseYuv: YuvFrame,
-    val baseArgb: IntArray,
-    val leftYuv: YuvFrame? = null,
-    val rightYuv: YuvFrame? = null,
-    val upYuv: YuvFrame? = null,
-    val downYuv: YuvFrame? = null,
-    val blinkYuv: YuvFrame? = null,
-    val smileYuv: YuvFrame? = null,
-    val leftArgb: IntArray? = null,
-    val rightArgb: IntArray? = null,
-    val upArgb: IntArray? = null,
-    val downArgb: IntArray? = null,
-    val blinkArgb: IntArray? = null,
-    val smileArgb: IntArray? = null
+    val baseArgb: IntArray
 )
 
 object FaceWarpEngine {
 
-    private const val GRID_X = 20
-    private const val GRID_Y = 20
+    private const val GRID_X = 24
+    private const val GRID_Y = 24
 
-    fun loadPoseBank(
+    fun loadPhotoAsset(
         basePath: String,
-        poseDir: File?,
         maxDim: Int,
         includeArgb: Boolean
-    ): FacePoseBank? {
+    ): FacePhotoAsset? {
         val baseBmp = decodeScaledBitmap(basePath, maxDim) ?: return null
         val w = baseBmp.width
         val h = baseBmp.height
@@ -164,43 +190,11 @@ object FaceWarpEngine {
         baseBmp.recycle()
 
         val baseYuv = argbToYuv(baseArgb, w, h)
-
-        fun loadPose(name: String): Pair<YuvFrame?, IntArray?> {
-            if (poseDir == null) return null to null
-            val f = File(poseDir, name)
-            if (!f.exists() || !f.canRead() || f.length() == 0L) return null to null
-            val bmp = decodeExactBitmap(f.absolutePath, w, h) ?: return null to null
-            val px = IntArray(w * h)
-            bmp.getPixels(px, 0, w, 0, 0, w, h)
-            bmp.recycle()
-            val yuv = argbToYuv(px, w, h)
-            return yuv to (if (includeArgb) px else null)
-        }
-
-        val (lY, lA) = loadPose("vcam_pose_left.jpg")
-        val (rY, rA) = loadPose("vcam_pose_right.jpg")
-        val (uY, uA) = loadPose("vcam_pose_up.jpg")
-        val (dY, dA) = loadPose("vcam_pose_down.jpg")
-        val (bY, bA) = loadPose("vcam_pose_blink.jpg")
-        val (sY, sA) = loadPose("vcam_pose_smile.jpg")
-
-        return FacePoseBank(
+        return FacePhotoAsset(
             width = w,
             height = h,
             baseYuv = baseYuv,
-            baseArgb = if (includeArgb) baseArgb else IntArray(0),
-            leftYuv = lY,
-            rightYuv = rY,
-            upYuv = uY,
-            downYuv = dY,
-            blinkYuv = bY,
-            smileYuv = sY,
-            leftArgb = lA,
-            rightArgb = rA,
-            upArgb = uA,
-            downArgb = dA,
-            blinkArgb = bA,
-            smileArgb = sA
+            baseArgb = if (includeArgb) baseArgb else IntArray(0)
         )
     }
 
@@ -225,21 +219,6 @@ object FaceWarpEngine {
                 raw
             } else {
                 val scaled = Bitmap.createScaledBitmap(raw, tw, th, true)
-                if (scaled !== raw) raw.recycle()
-                scaled
-            }
-        } catch (_: Throwable) {
-            null
-        }
-    }
-
-    private fun decodeExactBitmap(path: String, w: Int, h: Int): Bitmap? {
-        return try {
-            val raw = BitmapFactory.decodeFile(path) ?: return null
-            if (raw.width == w && raw.height == h) {
-                raw
-            } else {
-                val scaled = Bitmap.createScaledBitmap(raw, w, h, true)
                 if (scaled !== raw) raw.recycle()
                 scaled
             }
@@ -278,46 +257,69 @@ object FaceWarpEngine {
     }
 
     /**
-     * Human-like spring-damped facial motion engine:
-     * - Critically damped spring physics (smooth acceleration + natural deceleration)
-     * - Natural coupled head roll when turning left/right
-     * - Anchored neck/shoulder falloff so the head pivots realistically instead of sliding
-     * - Organic waypoint Auto-Move with human pauses & micro-drift (no robotic sine loops)
-     * - Asymmetric real blink envelope (65ms snap close, 25ms hold, 175ms soft open)
-     * - Subtle eye-gaze saccade leading head turns
+     * 100% Offline 6D (6DoF) Depth-Relief & Spring-Physics Animator:
+     * - Builds an anatomical 3D facial heightfield Z(u, v) (skull ellipsoid + nose bridge + cheek contour + eye sockets)
+     * - Applies true 3x3 3D Euler rotation (Yaw, Pitch, Roll) + 3D Translation (X, Y, Z) + pinhole perspective projection
+     * - Computes subtle Lambertian 3D micro-shading across cheeks/nose as head turns
+     * - Uses critically-damped 6D springs + asymmetric real blink curve + eye-gaze saccade lead
      */
     class MotionAnimator {
+        // 6D smoothed physical state
         var curYaw = 0f
         var curPitch = 0f
         var curRoll = 0f
+        var curTx = 0f
+        var curTy = 0f
+        var curTz = 0f
+
+        private var velYaw = 0f
+        private var velPitch = 0f
+        private var velRoll = 0f
+        private var velTx = 0f
+        private var velTy = 0f
+        private var velTz = 0f
+
         var curSmile = 0f
         var curBlink = 0f
         var curGazeX = 0f
         var curGazeY = 0f
 
-        private var velYaw = 0f
-        private var velPitch = 0f
         private var lastStepMs = 0L
-
         private var lastBlinkSeq = 0L
         private var blinkStartMs = 0L
         private var nextAutoBlinkMs = System.currentTimeMillis() + 2600L
         private var frameCounter = 0L
 
-        // Organic human Auto-Move waypoint state machine (no mechanical sine pendulum)
+        // Organic 6D Auto-Move waypoint state machine
         private var sweepIdx = 0
         private var sweepNextSwitchMs = 0L
-        private var sweepTargetYaw = 0f
-        private var sweepTargetPitch = 0f
-        private var sweepTargetSmile = 0f
+        private var swYaw = 0f
+        private var swPitch = 0f
+        private var swRoll = 0f
+        private var swTx = 0f
+        private var swTy = 0f
+        private var swTz = 0f
+        private var swSmile = 0f
         private var rngState = 0x5DEECE66DL xor System.nanoTime()
 
-        private val gridDx = FloatArray((GRID_X + 1) * (GRID_Y + 1))
-        private val gridDy = FloatArray((GRID_X + 1) * (GRID_Y + 1))
+        private val gridCount = (GRID_X + 1) * (GRID_Y + 1)
+        private val gridDx = FloatArray(gridCount)
+        private val gridDy = FloatArray(gridCount)
+        private val gridShade = FloatArray(gridCount) { 1f }
 
+        // Cached anatomical 3D face depth & normals (rebuilt only if face landmarks change)
+        private val depthZ = FloatArray(gridCount)
+        private val headMaskArr = FloatArray(gridCount)
+        private val baseNx = FloatArray(gridCount)
+        private val baseNy = FloatArray(gridCount)
+        private val baseNz = FloatArray(gridCount) { 1f }
+        private var depthSig = 0
+
+        // Reusable scanline LUT + YUV buffers (zero GC allocation per frame)
         private var cachedW = 0
         private var cachedH = 0
         private var warpLut = IntArray(0)
+        private var shadeLut = ShortArray(0) // 8.8 fixed point luminance multiplier (256 = 1.0x)
         private var reusedYuv: YuvFrame? = null
 
         private fun nextUnitFloat(): Float {
@@ -327,122 +329,239 @@ object FaceWarpEngine {
         }
 
         private fun organicNoise(tSec: Float, seed: Float): Float {
-            // Sum of incommensurate low-frequency harmonics produces natural human micro-sway
-            return (sin(tSec * 0.71f + seed) * 0.50f +
-                sin(tSec * 1.63f + seed * 2.1f) * 0.30f +
-                cos(tSec * 2.87f + seed * 0.7f) * 0.20f)
+            return (sin(tSec * 0.67f + seed) * 0.48f +
+                sin(tSec * 1.53f + seed * 2.1f) * 0.32f +
+                cos(tSec * 2.71f + seed * 0.8f) * 0.20f)
         }
 
-        private fun advanceHumanWaypoint(nowMs: Long) {
-            if (nowMs < sweepNextSwitchMs) return
-            val jitterY = (nextUnitFloat() - 0.5f) * 0.14f
-            val jitterP = (nextUnitFloat() - 0.5f) * 0.12f
+        private fun ensureDepthModel(ctrl: ControlState) {
+            var sig = (ctrl.faceCx * 1000).toInt()
+            sig = 31 * sig + (ctrl.faceCy * 1000).toInt()
+            sig = 31 * sig + (ctrl.faceR * 1000).toInt()
+            sig = 31 * sig + (ctrl.eyeLx * 1000).toInt()
+            sig = 31 * sig + (ctrl.eyeRx * 1000).toInt()
+            if (sig == depthSig) return
+            depthSig = sig
 
-            // Realistic human gaze & head pose routine with natural dwell pauses
+            val cx = ctrl.faceCx
+            val cy = ctrl.faceCy
+            val rx = (ctrl.faceR * 1.28f).coerceAtLeast(0.13f)
+            val ry = (ctrl.faceR * 1.60f).coerceAtLeast(0.16f)
+            val noseX = cx
+            val noseY = cy + ctrl.faceR * 0.06f
+            val eyeR = (ctrl.faceR * 0.24f).coerceAtLeast(0.03f)
+            val cols = GRID_X + 1
+
+            for (gy in 0..GRID_Y) {
+                val v = gy.toFloat() / GRID_Y
+                for (gx in 0..GRID_X) {
+                    val u = gx.toFloat() / GRID_X
+                    val nx = (u - cx) / rx
+                    val ny = (v - cy) / ry
+                    val r2 = nx * nx + ny * ny
+
+                    // 1. Base 3D head ellipsoid height
+                    val skullZ = if (r2 < 1.35f) {
+                        val s = (1f - r2 / 1.35f).coerceIn(0f, 1f)
+                        sqrt(s) * 0.22f
+                    } else {
+                        0f
+                    }
+
+                    // 2. Protruding 3D nose bridge & tip (drives unmistakable 3D parallax!)
+                    val ndx = (u - noseX) / (rx * 0.26f)
+                    val ndy = (v - noseY) / (ry * 0.34f)
+                    val noseZ = (exp(-(ndx * ndx + ndy * ndy).toDouble()).toFloat()) * 0.095f
+
+                    // 3. Subtle cheek volume + brow ridge
+                    val lCheekX = (u - (cx - rx * 0.42f)) / (rx * 0.40f)
+                    val rCheekX = (u - (cx + rx * 0.42f)) / (rx * 0.40f)
+                    val cheekY = (v - (cy + ry * 0.14f)) / (ry * 0.35f)
+                    val cheekZ = (exp(-(lCheekX * lCheekX + cheekY * cheekY).toDouble()).toFloat() +
+                        exp(-(rCheekX * rCheekX + cheekY * cheekY).toDouble()).toFloat()) * 0.032f
+
+                    // 4. Slight eye socket indentation
+                    val lex = (u - ctrl.eyeLx) / (eyeR * 1.4f)
+                    val ley = (v - ctrl.eyeLy) / (eyeR * 1.1f)
+                    val rex = (u - ctrl.eyeRx) / (eyeR * 1.4f)
+                    val rey = (v - ctrl.eyeRy) / (eyeR * 1.1f)
+                    val socketDip = (exp(-(lex * lex + ley * ley).toDouble()).toFloat() +
+                        exp(-(rex * rex + rey * rey).toDouble()).toFloat()) * 0.022f
+
+                    // Smooth blend mask separating foreground head from background
+                    val mask = if (r2 < 2.35f) {
+                        val f = 1f - (r2 / 2.35f)
+                        f * f * (3f - 2f * f)
+                    } else {
+                        0f
+                    }
+
+                    // Soft anchor at lower shoulders so head pivots naturally on neck
+                    val neckY = (cy + ctrl.faceR * 1.40f).coerceIn(0.55f, 0.95f)
+                    val shoulderPin = if (v > neckY - 0.12f) {
+                        (1f - ((v - (neckY - 0.12f)) / 0.24f)).coerceIn(0.18f, 1f)
+                    } else {
+                        1f
+                    }
+
+                    val idx = gy * cols + gx
+                    depthZ[idx] = ((skullZ + noseZ + cheekZ - socketDip).coerceAtLeast(0f)) * mask
+                    headMaskArr[idx] = mask * shoulderPin
+                }
+            }
+
+            // Estimate 3D surface normals via finite differences on depthZ
+            val du = 1f / GRID_X
+            val dv = 1f / GRID_Y
+            for (gy in 0..GRID_Y) {
+                for (gx in 0..GRID_X) {
+                    val idx = gy * cols + gx
+                    val gxL = (gx - 1).coerceAtLeast(0)
+                    val gxR = (gx + 1).coerceAtMost(GRID_X)
+                    val gyU = (gy - 1).coerceAtLeast(0)
+                    val gyD = (gy + 1).coerceAtMost(GRID_Y)
+
+                    val dzdx = (depthZ[gy * cols + gxR] - depthZ[gy * cols + gxL]) / ((gxR - gxL) * du)
+                    val dzdy = (depthZ[gyD * cols + gx] - depthZ[gyU * cols + gx]) / ((gyD - gyU) * dv)
+
+                    val nx = -dzdx * 1.6f
+                    val ny = -dzdy * 1.6f
+                    val nz = 1f
+                    val invLen = 1f / sqrt(nx * nx + ny * ny + nz * nz)
+                    baseNx[idx] = nx * invLen
+                    baseNy[idx] = ny * invLen
+                    baseNz[idx] = nz * invLen
+                }
+            }
+        }
+
+        private fun advanceHuman6DWaypoint(nowMs: Long) {
+            if (nowMs < sweepNextSwitchMs) return
+            val j1 = (nextUnitFloat() - 0.5f) * 0.16f
+            val j2 = (nextUnitFloat() - 0.5f) * 0.14f
+            val j3 = (nextUnitFloat() - 0.5f) * 0.12f
+
             when (sweepIdx % 8) {
-                0 -> { // Center calm fixation
-                    sweepTargetYaw = jitterY * 0.4f
-                    sweepTargetPitch = jitterP * 0.4f
-                    sweepTargetSmile = 0.08f
-                    sweepNextSwitchMs = nowMs + 1100L + (nextUnitFloat() * 700L).toLong()
+                0 -> { // Centered calm posture
+                    swYaw = j1 * 0.35f; swPitch = j2 * 0.35f; swRoll = j3 * 0.25f
+                    swTx = 0f; swTy = 0f; swTz = 0.08f; swSmile = 0.08f
+                    sweepNextSwitchMs = nowMs + 1050L + (nextUnitFloat() * 600L).toLong()
                 }
-                1 -> { // Smooth turn left
-                    sweepTargetYaw = -0.68f + jitterY
-                    sweepTargetPitch = 0.06f + jitterP * 0.5f
-                    sweepTargetSmile = 0.0f
-                    sweepNextSwitchMs = nowMs + 1350L + (nextUnitFloat() * 550L).toLong()
+                1 -> { // Turn Left + slight natural tilt + slight lean in
+                    swYaw = -0.68f + j1; swPitch = 0.06f + j2 * 0.4f; swRoll = 0.22f + j3 * 0.3f
+                    swTx = -0.22f; swTy = 0.04f; swTz = 0.18f; swSmile = 0f
+                    sweepNextSwitchMs = nowMs + 1300L + (nextUnitFloat() * 550L).toLong()
                 }
-                2 -> { // Return to center + natural blink
-                    sweepTargetYaw = 0.04f + jitterY * 0.4f
-                    sweepTargetPitch = -0.04f + jitterP * 0.4f
-                    sweepTargetSmile = 0.15f
-                    blinkStartMs = nowMs + 120L
-                    sweepNextSwitchMs = nowMs + 950L + (nextUnitFloat() * 500L).toLong()
+                2 -> { // Return Center + blink
+                    swYaw = 0.04f + j1 * 0.3f; swPitch = -0.05f + j2 * 0.3f; swRoll = 0f
+                    swTx = 0f; swTy = -0.03f; swTz = 0.05f; swSmile = 0.18f
+                    blinkStartMs = nowMs + 100L
+                    sweepNextSwitchMs = nowMs + 950L + (nextUnitFloat() * 450L).toLong()
                 }
-                3 -> { // Smooth turn right
-                    sweepTargetYaw = 0.68f + jitterY
-                    sweepTargetPitch = 0.05f + jitterP * 0.5f
-                    sweepTargetSmile = 0.0f
-                    sweepNextSwitchMs = nowMs + 1350L + (nextUnitFloat() * 550L).toLong()
+                3 -> { // Turn Right + opposite tilt + shift right
+                    swYaw = 0.68f + j1; swPitch = 0.05f + j2 * 0.4f; swRoll = -0.22f + j3 * 0.3f
+                    swTx = 0.22f; swTy = 0.03f; swTz = 0.16f; swSmile = 0f
+                    sweepNextSwitchMs = nowMs + 1300L + (nextUnitFloat() * 550L).toLong()
                 }
-                4 -> { // Slight look up
-                    sweepTargetYaw = jitterY * 0.5f
-                    sweepTargetPitch = 0.52f + jitterP * 0.6f
-                    sweepTargetSmile = 0.0f
+                4 -> { // Look Up + lean slightly back
+                    swYaw = j1 * 0.4f; swPitch = 0.56f + j2 * 0.4f; swRoll = j3 * 0.25f
+                    swTx = 0f; swTy = 0.18f; swTz = -0.18f; swSmile = 0f
                     sweepNextSwitchMs = nowMs + 1150L + (nextUnitFloat() * 500L).toLong()
                 }
-                5 -> { // Gentle nod down
-                    sweepTargetYaw = jitterY * 0.5f
-                    sweepTargetPitch = -0.46f + jitterP * 0.6f
-                    sweepTargetSmile = 0.05f
+                5 -> { // Nod Down + subtle approach closer (Z+)
+                    swYaw = j1 * 0.4f; swPitch = -0.48f + j2 * 0.4f; swRoll = -j3 * 0.25f
+                    swTx = 0f; swTy = -0.15f; swTz = 0.26f; swSmile = 0.06f
                     sweepNextSwitchMs = nowMs + 1100L + (nextUnitFloat() * 450L).toLong()
                 }
-                6 -> { // Warm slight smile at camera + blink
-                    sweepTargetYaw = jitterY * 0.3f
-                    sweepTargetPitch = 0.02f + jitterP * 0.3f
-                    sweepTargetSmile = 0.45f
+                6 -> { // Warm camera glance + slight head tilt + blink
+                    swYaw = j1 * 0.25f; swPitch = 0.02f; swRoll = 0.18f
+                    swTx = 0.05f; swTy = 0.02f; swTz = 0.20f; swSmile = 0.42f
                     blinkStartMs = nowMs + 80L
-                    sweepNextSwitchMs = nowMs + 1250L + (nextUnitFloat() * 600L).toLong()
+                    sweepNextSwitchMs = nowMs + 1200L + (nextUnitFloat() * 550L).toLong()
                 }
-                else -> { // Relax back to neutral
-                    sweepTargetYaw = 0f
-                    sweepTargetPitch = 0f
-                    sweepTargetSmile = 0f
-                    sweepNextSwitchMs = nowMs + 900L + (nextUnitFloat() * 500L).toLong()
+                else -> { // Relax back to neutral 6D origin
+                    swYaw = 0f; swPitch = 0f; swRoll = 0f
+                    swTx = 0f; swTy = 0f; swTz = 0f; swSmile = 0f
+                    sweepNextSwitchMs = nowMs + 900L + (nextUnitFloat() * 450L).toLong()
                 }
             }
             sweepIdx++
         }
 
+        private fun stepSpring(cur: Float, vel: Float, target: Float, k: Float, d: Float, dt: Float): Pair<Float, Float> {
+            val acc = (target - cur) * k - vel * d
+            val nextVel = vel + acc * dt
+            val nextCur = (cur + nextVel * dt).coerceIn(-1.15f, 1.15f)
+            return nextCur to nextVel
+        }
+
         fun step(ctrl: ControlState, nowMs: Long) {
-            val dt = if (lastStepMs == 0L) 0.033f else ((nowMs - lastStepMs) * 0.001f).coerceIn(0.01f, 0.08f)
+            val dt = if (lastStepMs == 0L) 0.033f else ((nowMs - lastStepMs) * 0.001f).coerceIn(0.01f, 0.075f)
             lastStepMs = nowMs
             val tSec = (nowMs % 600_000L) * 0.001f
 
-            var targetYaw = ctrl.yaw
-            var targetPitch = ctrl.pitch
-            var targetSmile = ctrl.smile
+            var tYaw = ctrl.yaw
+            var tPitch = ctrl.pitch
+            var tRoll = ctrl.roll
+            var tTx = ctrl.tx
+            var tTy = ctrl.ty
+            var tTz = ctrl.tz
+            var tSmile = ctrl.smile
 
             if (ctrl.autoSweep) {
-                advanceHumanWaypoint(nowMs)
-                targetYaw = sweepTargetYaw
-                targetPitch = sweepTargetPitch
-                if (targetSmile < 0.05f) targetSmile = sweepTargetSmile
+                advanceHuman6DWaypoint(nowMs)
+                tYaw = swYaw
+                tPitch = swPitch
+                tRoll = swRoll
+                tTx = swTx
+                tTy = swTy
+                tTz = swTz
+                if (tSmile < 0.05f) tSmile = swSmile
             } else {
                 sweepNextSwitchMs = 0L
             }
 
-            // Organic human micro-posture drift (prevents frozen statue effect)
+            // Subtle natural coupled roll & organic 6D human micro-sway
             if (ctrl.autoIdle || ctrl.autoSweep) {
-                targetYaw += organicNoise(tSec, 1.3f) * 0.055f
-                targetPitch += organicNoise(tSec, 4.7f) * 0.045f
+                tYaw += organicNoise(tSec, 1.3f) * 0.05f
+                tPitch += organicNoise(tSec, 4.7f) * 0.04f
+                tRoll += (-tYaw * 0.10f) + organicNoise(tSec, 8.2f) * 0.03f
+                tTx += organicNoise(tSec, 2.9f) * 0.035f
+                tTy += sin(tSec * 1.45f) * 0.025f // Natural breathing lift
+                tTz += sin(tSec * 1.45f + 0.6f) * 0.035f // Subtle breathing depth shift
             }
 
-            // Critically-damped spring physics (feels weighted like a real human head)
-            val stiffness = if (ctrl.autoSweep) 22f else 34f
-            val damping = if (ctrl.autoSweep) 8.8f else 11.2f
+            val kRot = if (ctrl.autoSweep) 22f else 36f
+            val dRot = if (ctrl.autoSweep) 8.8f else 11.5f
+            val kPos = if (ctrl.autoSweep) 18f else 32f
+            val dPos = if (ctrl.autoSweep) 8.2f else 10.8f
 
-            val accYaw = (targetYaw - curYaw) * stiffness - velYaw * damping
-            velYaw += accYaw * dt
-            curYaw = (curYaw + velYaw * dt).coerceIn(-1.1f, 1.1f)
+            val rYaw = stepSpring(curYaw, velYaw, tYaw, kRot, dRot, dt)
+            curYaw = rYaw.first; velYaw = rYaw.second
 
-            val accPitch = (targetPitch - curPitch) * stiffness - velPitch * damping
-            velPitch += accPitch * dt
-            curPitch = (curPitch + velPitch * dt).coerceIn(-1.1f, 1.1f)
+            val rPitch = stepSpring(curPitch, velPitch, tPitch, kRot, dRot, dt)
+            curPitch = rPitch.first; velPitch = rPitch.second
 
-            // Coupled natural head roll (humans slightly tilt their head when turning left/right)
-            val targetRoll = (-curYaw * 0.085f) + (if (ctrl.autoIdle) organicNoise(tSec, 8.2f) * 0.022f else 0f)
-            curRoll += (targetRoll - curRoll) * (dt * 7.5f).coerceAtMost(1f)
+            val rRoll = stepSpring(curRoll, velRoll, tRoll, kRot, dRot, dt)
+            curRoll = rRoll.first; velRoll = rRoll.second
 
-            // Eye gaze leads the head turn slightly (fast saccade)
-            val targetGazeX = (targetYaw - curYaw * 0.45f).coerceIn(-0.8f, 0.8f)
-            val targetGazeY = (targetPitch - curPitch * 0.45f).coerceIn(-0.6f, 0.6f)
+            val rTx = stepSpring(curTx, velTx, tTx, kPos, dPos, dt)
+            curTx = rTx.first; velTx = rTx.second
+
+            val rTy = stepSpring(curTy, velTy, tTy, kPos, dPos, dt)
+            curTy = rTy.first; velTy = rTy.second
+
+            val rTz = stepSpring(curTz, velTz, tTz, kPos, dPos, dt)
+            curTz = rTz.first; velTz = rTz.second
+
+            // Fast eye-gaze saccade leading head turn
+            val targetGazeX = (tYaw - curYaw * 0.45f).coerceIn(-0.85f, 0.85f)
+            val targetGazeY = (tPitch - curPitch * 0.45f).coerceIn(-0.65f, 0.65f)
             curGazeX += (targetGazeX - curGazeX) * (dt * 16f).coerceAtMost(1f)
             curGazeY += (targetGazeY - curGazeY) * (dt * 16f).coerceAtMost(1f)
+            curSmile += (tSmile - curSmile) * (dt * 6.5f).coerceAtMost(1f)
 
-            curSmile += (targetSmile - curSmile) * (dt * 6.5f).coerceAtMost(1f)
-
-            // Manual or randomized natural blinking (with occasional double-blink)
+            // Randomized natural blink + occasional double-blink
             if (ctrl.blinkSeq != lastBlinkSeq) {
                 lastBlinkSeq = ctrl.blinkSeq
                 blinkStartMs = nowMs
@@ -450,14 +569,10 @@ object FaceWarpEngine {
             if ((ctrl.autoIdle || ctrl.autoSweep) && nowMs >= nextAutoBlinkMs && (nowMs - blinkStartMs) > 550L) {
                 blinkStartMs = nowMs
                 val shortDouble = nextUnitFloat() < 0.16f
-                nextAutoBlinkMs = nowMs + if (shortDouble) {
-                    620L
-                } else {
-                    2400L + (nextUnitFloat() * 3400L).toLong()
-                }
+                nextAutoBlinkMs = nowMs + if (shortDouble) 600L else (2300L + (nextUnitFloat() * 3400L).toLong())
             }
 
-            // Realistic asymmetric human blink curve: 65ms fast close -> 25ms hold -> 175ms soft open
+            // Asymmetric human blink envelope (65ms close -> 25ms hold -> 175ms open)
             val bElapsed = nowMs - blinkStartMs
             curBlink = when {
                 bElapsed < 0L || bElapsed > 265L -> 0f
@@ -473,93 +588,115 @@ object FaceWarpEngine {
             }
         }
 
-        private fun computeMesh(ctrl: ControlState, nowMs: Long, useSoftWarpForAi: Boolean) {
-            val tSec = (nowMs % 600_000L) * 0.001f
-            // Subtle natural breathing rise/fall in chest & chin (~14 breaths/min = 0.23 Hz)
-            val breathPhase = sin(tSec * 1.45f)
-            val breathY = if (ctrl.autoIdle || ctrl.autoSweep) breathPhase * 0.0045f else 0f
+        /**
+         * True 3D 6DoF Perspective Projection Mesh:
+         * Transforms every vertex on the anatomical 3D depth-relief surface using a 3x3 Euler
+         * rotation matrix (Yaw, Pitch, Roll) and 3D translation (X, Y, Z) with pinhole perspective.
+         */
+        private fun compute6DMesh(ctrl: ControlState) {
+            ensureDepthModel(ctrl)
 
-            // Keep offline warp amplitudes physically restrained so image never looks rubbery/stretched
-            val warpScale = if (useSoftWarpForAi) 0.24f else 0.78f
-            val effYaw = (curYaw * warpScale).coerceIn(-0.85f, 0.85f)
-            val effPitch = (curPitch * warpScale).coerceIn(-0.80f, 0.80f)
-            val effRoll = (curRoll * (if (useSoftWarpForAi) 0.35f else 1.0f))
-            val effBlink = if (useSoftWarpForAi) curBlink * 0.35f else curBlink
-            val effSmile = if (useSoftWarpForAi) curSmile * 0.35f else curSmile
+            // Physical angles in radians (restrained to natural human range so 3D relief stays realistic)
+            val yawRad = curYaw * 0.34f       // up to ~±19.5°
+            val pitchRad = curPitch * 0.28f   // up to ~±16°
+            val rollRad = curRoll * 0.30f     // up to ~±17°
 
-            val cx = ctrl.faceCx
-            val cy = ctrl.faceCy
-            // Pivot point sits near the base of the neck (below chin) so head rotates naturally!
-            val pivotX = cx
-            val pivotY = (cy + ctrl.faceR * 1.35f).coerceIn(0.55f, 0.96f)
+            // 3D translation in normalized camera coordinates
+            val shiftX = curTx * 0.12f
+            val shiftY = -curTy * 0.11f
+            val shiftZ = curTz * 0.28f        // Positive = head moves closer to camera lens
 
-            val rx = (ctrl.faceR * 1.30f).coerceAtLeast(0.13f)
-            val ry = (ctrl.faceR * 1.62f).coerceAtLeast(0.16f)
+            val cyA = cos(yawRad); val syA = sin(yawRad)
+            val cpA = cos(pitchRad); val spA = sin(pitchRad)
+            val crA = cos(rollRad); val srA = sin(rollRad)
+
+            // Combined 3x3 inverse rotation matrix R^T = Rx(-pitch) * Ry(-yaw) * Rz(-roll)
+            val r00 = cyA * crA
+            val r01 = cyA * srA
+            val r02 = -syA
+
+            val r10 = spA * syA * crA - cpA * srA
+            val r11 = spA * syA * srA + cpA * crA
+            val r12 = spA * cyA
+
+            val r20 = cpA * syA * crA + spA * srA
+            val r21 = cpA * syA * srA - spA * crA
+            val r22 = cpA * cyA
+
+            // Pinhole camera distance (lower = stronger 3D perspective foreshortening when moving Z)
+            val camDist = 1.95f
+            val pivotX = ctrl.faceCx
+            val pivotY = ctrl.faceCy + ctrl.faceR * 0.18f
+            val pivotZ = 0.08f
+
             val eyeR = (ctrl.faceR * 0.23f).coerceAtLeast(0.03f)
-            val mouthY = (cy + ctrl.faceR * 0.56f).coerceIn(0.25f, 0.90f)
+            val mouthY = (ctrl.faceCy + ctrl.faceR * 0.56f).coerceIn(0.25f, 0.90f)
             val mouthRx = (ctrl.faceR * 0.48f).coerceAtLeast(0.06f)
 
-            val cosR = cos(effRoll)
-            val sinR = sin(effRoll)
+            // Soft studio light direction (slightly above and in front)
+            val lightX = 0.18f
+            val lightY = -0.26f
+            val lightZ = 0.948f
 
             val cols = GRID_X + 1
             for (gy in 0..GRID_Y) {
                 val v = gy.toFloat() / GRID_Y
                 for (gx in 0..GRID_X) {
                     val u = gx.toFloat() / GRID_X
-                    val nx = (u - cx) / rx
-                    val ny = (v - cy) / ry
-                    val r2 = nx * nx + ny * ny
+                    val idx = gy * cols + gx
 
-                    // Smooth anchor mask: head moves freely, neck & background stay gently pinned
-                    val headMask = if (r2 < 2.6f) {
-                        val f = 1f - (r2 / 2.6f)
-                        f * f * (3f - 2f * f) // C1 smoothstep prevents hard seam edges
-                    } else {
-                        0f
-                    }
-                    // Extra pin below chin so shoulders don't drift sideways with the face
-                    val shoulderPin = if (v > pivotY - 0.10f) {
-                        (1f - ((v - (pivotY - 0.10f)) / 0.22f)).coerceIn(0.15f, 1f)
-                    } else {
-                        1f
-                    }
-                    val w = headMask * shoulderPin
+                    val zSurf = depthZ[idx]
+                    val mask = headMaskArr[idx]
 
                     var dx = 0f
-                    var dy = breathY * (0.35f + 0.65f * v)
+                    var dy = 0f
+                    var shade = 1.0f
 
-                    if (w > 0.001f) {
-                        // 1. Coupled head roll around neck pivot
-                        val px = u - pivotX
-                        val py = v - pivotY
-                        val rotDx = (px * cosR - py * sinR) - px
-                        val rotDy = (px * sinR + py * cosR) - py
-                        dx += rotDx * w
-                        dy += rotDy * w
+                    if (mask > 0.001f) {
+                        // Local 3D point on the head surface
+                        val lx = u - pivotX - shiftX * mask
+                        val ly = v - pivotY - shiftY * mask
+                        val lz = (zSurf - pivotZ) + shiftZ * (0.45f + 0.55f * (zSurf / 0.30f).coerceIn(0f, 1f)) * mask
 
-                        // 2. Pseudo-3D cylindrical head yaw + nose parallax (center turns slightly more than ears)
-                        val noseDepth = (1f - (r2 * 0.45f)).coerceIn(0.2f, 1.0f)
-                        dx -= effYaw * rx * (0.17f + 0.08f * noseDepth) * w
-                        // Foreshorten the receding cheek, expand the advancing cheek
-                        dx += (u - cx) * (effYaw * nx * 0.11f) * w
+                        // Inverse 3D rotation to find corresponding source texture coordinate
+                        val rx3 = r00 * lx + r01 * ly + r02 * lz
+                        val ry3 = r10 * lx + r11 * ly + r12 * lz
+                        val rz3 = r20 * lx + r21 * ly + r22 * lz
 
-                        // 3. Natural head pitch (chin/forehead perspective tilt)
-                        dy += effPitch * ry * (0.15f + 0.06f * noseDepth) * w
-                        dy += (v - cy) * (effPitch * ny * 0.08f) * w
+                        // Perspective depth projection (closer nose shifts/scales more than recessed ears/background)
+                        val persp = camDist / (camDist + (rz3 - (zSurf - pivotZ)) * 1.35f).coerceAtLeast(0.85f)
+                        val srcU = pivotX + rx3 * persp
+                        val srcV = pivotY + ry3 * persp
+
+                        dx = (srcU - u) * mask
+                        dy = (srcV - v) * mask
+
+                        // Subtle 3D Lambertian micro-shading as cheeks/nose turn toward/away from studio light
+                        val bnx = baseNx[idx]
+                        val bny = baseNy[idx]
+                        val bnz = baseNz[idx]
+                        // Forward-rotated normal for lighting
+                        val fnx = r00 * bnx + r10 * bny + r20 * bnz
+                        val fny = r01 * bnx + r11 * bny + r21 * bnz
+                        val fnz = r02 * bnx + r12 * bny + r22 * bnz
+
+                        val baseDot = (bnx * lightX + bny * lightY + bnz * lightZ).coerceIn(0.25f, 1f)
+                        val rotDot = (fnx * lightX + fny * lightY + fnz * lightZ).coerceIn(0.20f, 1f)
+                        val relLight = 1f + (rotDot - baseDot) * 0.32f * mask
+                        shade = relLight.coerceIn(0.88f, 1.12f)
                     }
 
-                    // 4. Subtle eye-gaze iris shift + realistic upper-eyelid blink
+                    // Eyelid blink & pupil saccade gaze
                     val lex = (u - ctrl.eyeLx) / (eyeR * 1.30f)
                     val ley = (v - ctrl.eyeLy) / (eyeR * 0.85f)
                     val le2 = lex * lex + ley * ley
                     if (le2 < 1.25f) {
                         val ew = 1f - le2 / 1.25f
                         val ew2 = ew * ew
-                        if (effBlink > 0.02f) {
-                            dy -= effBlink * eyeR * 0.82f * ew2
+                        if (curBlink > 0.02f) {
+                            dy -= curBlink * eyeR * 0.82f * ew2
+                            shade *= (1f - curBlink * 0.14f * ew2)
                         } else {
-                            // Subtle pupil gaze lead
                             dx -= curGazeX * eyeR * 0.18f * ew2
                             dy += curGazeY * eyeR * 0.14f * ew2
                         }
@@ -571,39 +708,41 @@ object FaceWarpEngine {
                     if (re2 < 1.25f) {
                         val ew = 1f - re2 / 1.25f
                         val ew2 = ew * ew
-                        if (effBlink > 0.02f) {
-                            dy -= effBlink * eyeR * 0.82f * ew2
+                        if (curBlink > 0.02f) {
+                            dy -= curBlink * eyeR * 0.82f * ew2
+                            shade *= (1f - curBlink * 0.14f * ew2)
                         } else {
                             dx -= curGazeX * eyeR * 0.18f * ew2
                             dy += curGazeY * eyeR * 0.14f * ew2
                         }
                     }
 
-                    // 5. Gentle natural smile + slight cheek raise (Duchenne smile)
-                    if (effSmile > 0.02f) {
-                        val mx = (u - cx) / mouthRx
+                    // Gentle smile corner lift
+                    if (curSmile > 0.02f) {
+                        val mx = (u - ctrl.faceCx) / mouthRx
                         val my = (v - mouthY) / (mouthRx * 0.55f)
                         val m2 = mx * mx + my * my
                         if (m2 < 1.45f) {
                             val mw = 1f - m2 / 1.45f
                             val cornerFactor = abs(mx).coerceIn(0f, 1.2f)
-                            dy += effSmile * mouthRx * 0.20f * cornerFactor * mw * mw
-                            dx -= effSmile * mx * mouthRx * 0.09f * mw * mw
+                            dy += curSmile * mouthRx * 0.20f * cornerFactor * mw * mw
+                            dx -= curSmile * mx * mouthRx * 0.09f * mw * mw
                         }
                     }
 
-                    val idx = gy * cols + gx
                     gridDx[idx] = dx
                     gridDy[idx] = dy
+                    gridShade[idx] = shade
                 }
             }
         }
 
-        private fun buildWarpLut(w: Int, h: Int) {
+        private fun buildWarpAndShadeLut(w: Int, h: Int) {
             if (cachedW != w || cachedH != h || warpLut.size != w * h) {
                 cachedW = w
                 cachedH = h
                 warpLut = IntArray(w * h)
+                shadeLut = ShortArray(w * h)
                 val cw = (w + 1) / 2
                 val ch = (h + 1) / 2
                 reusedYuv = YuvFrame(w, h, ByteArray(w * h), ByteArray(cw * ch), ByteArray(cw * ch), 0L)
@@ -613,6 +752,7 @@ object FaceWarpEngine {
             val maxX = w - 1
             val maxY = h - 1
             val lut = warpLut
+            val sLut = shadeLut
 
             for (gy in 0 until GRID_Y) {
                 val yStart = (gy * h) / GRID_Y
@@ -631,15 +771,14 @@ object FaceWarpEngine {
                     val i01 = row1 + gx
                     val i11 = i01 + 1
 
-                    val dx00 = gridDx[i00] * w
-                    val dx10 = gridDx[i10] * w
-                    val dx01 = gridDx[i01] * w
-                    val dx11 = gridDx[i11] * w
+                    val dx00 = gridDx[i00] * w; val dx10 = gridDx[i10] * w
+                    val dx01 = gridDx[i01] * w; val dx11 = gridDx[i11] * w
 
-                    val dy00 = gridDy[i00] * h
-                    val dy10 = gridDy[i10] * h
-                    val dy01 = gridDy[i01] * h
-                    val dy11 = gridDy[i11] * h
+                    val dy00 = gridDy[i00] * h; val dy10 = gridDy[i10] * h
+                    val dy01 = gridDy[i01] * h; val dy11 = gridDy[i11] * h
+
+                    val sh00 = gridShade[i00]; val sh10 = gridShade[i10]
+                    val sh01 = gridShade[i01]; val sh11 = gridShade[i11]
 
                     val invCellH = 1f / cellH
                     val invCellW = 1f / cellW
@@ -650,6 +789,8 @@ object FaceWarpEngine {
                         val rightDx = dx10 + (dx11 - dx10) * ty
                         val leftDy = dy00 + (dy01 - dy00) * ty
                         val rightDy = dy10 + (dy11 - dy10) * ty
+                        val leftSh = sh00 + (sh01 - sh00) * ty
+                        val rightSh = sh10 + (sh11 - sh10) * ty
 
                         var curDxFp = ((xStart + leftDx) * 65536f).toInt()
                         val stepDxFp = (((rightDx - leftDx) * invCellW + 1f) * 65536f).toInt()
@@ -657,134 +798,64 @@ object FaceWarpEngine {
                         var curDyFp = ((y + leftDy) * 65536f).toInt()
                         val stepDyFp = (((rightDy - leftDy) * invCellW) * 65536f).toInt()
 
+                        var curShFp = (leftSh * 256f * 256f).toInt()
+                        val stepShFp = (((rightSh - leftSh) * invCellW) * 256f * 256f).toInt()
+
                         var dstIdx = y * w + xStart
                         for (x in xStart until xEnd) {
                             val sx = (curDxFp shr 16).coerceIn(0, maxX)
                             val sy = (curDyFp shr 16).coerceIn(0, maxY)
-                            lut[dstIdx++] = sy * w + sx
+                            lut[dstIdx] = sy * w + sx
+                            sLut[dstIdx] = (curShFp shr 8).coerceIn(190, 310).toShort()
+                            dstIdx++
                             curDxFp += stepDxFp
                             curDyFp += stepDyFp
+                            curShFp += stepShFp
                         }
                     }
                 }
             }
         }
 
-        private fun pickPoseBlendYuv(bank: FacePoseBank): Pair<YuvFrame?, Int> {
-            if (curBlink > 0.25f && bank.blinkYuv != null) {
-                return bank.blinkYuv to (curBlink * 256f).toInt().coerceIn(0, 256)
-            }
-            if (curSmile > 0.15f && bank.smileYuv != null && abs(curYaw) < 0.35f && abs(curPitch) < 0.35f) {
-                return bank.smileYuv to (curSmile * 256f).toInt().coerceIn(0, 256)
-            }
-            if (abs(curYaw) >= abs(curPitch)) {
-                if (curYaw < -0.05f && bank.leftYuv != null) {
-                    return bank.leftYuv to ((-curYaw) * 256f).toInt().coerceIn(0, 256)
-                }
-                if (curYaw > 0.05f && bank.rightYuv != null) {
-                    return bank.rightYuv to (curYaw * 256f).toInt().coerceIn(0, 256)
-                }
-            } else {
-                if (curPitch > 0.05f && bank.upYuv != null) {
-                    return bank.upYuv to (curPitch * 256f).toInt().coerceIn(0, 256)
-                }
-                if (curPitch < -0.05f && bank.downYuv != null) {
-                    return bank.downYuv to ((-curPitch) * 256f).toInt().coerceIn(0, 256)
-                }
-            }
-            return null to 0
-        }
-
-        private fun pickPoseBlendArgb(bank: FacePoseBank): Pair<IntArray?, Int> {
-            if (curBlink > 0.25f && bank.blinkArgb != null) {
-                return bank.blinkArgb to (curBlink * 256f).toInt().coerceIn(0, 256)
-            }
-            if (curSmile > 0.15f && bank.smileArgb != null && abs(curYaw) < 0.35f && abs(curPitch) < 0.35f) {
-                return bank.smileArgb to (curSmile * 256f).toInt().coerceIn(0, 256)
-            }
-            if (abs(curYaw) >= abs(curPitch)) {
-                if (curYaw < -0.05f && bank.leftArgb != null) {
-                    return bank.leftArgb to ((-curYaw) * 256f).toInt().coerceIn(0, 256)
-                }
-                if (curYaw > 0.05f && bank.rightArgb != null) {
-                    return bank.rightArgb to (curYaw * 256f).toInt().coerceIn(0, 256)
-                }
-            } else {
-                if (curPitch > 0.05f && bank.upArgb != null) {
-                    return bank.upArgb to (curPitch * 256f).toInt().coerceIn(0, 256)
-                }
-                if (curPitch < -0.05f && bank.downArgb != null) {
-                    return bank.downArgb to ((-curPitch) * 256f).toInt().coerceIn(0, 256)
-                }
-            }
-            return null to 0
-        }
-
-        fun renderYuvFrame(bank: FacePoseBank, ctrl: ControlState, nowMs: Long): YuvFrame {
+        fun renderYuvFrame(asset: FacePhotoAsset, ctrl: ControlState, nowMs: Long): YuvFrame {
             step(ctrl, nowMs)
-            val (poseYuv, alpha) = pickPoseBlendYuv(bank)
-            computeMesh(ctrl, nowMs, useSoftWarpForAi = (poseYuv != null && alpha > 64))
+            compute6DMesh(ctrl)
 
-            val w = bank.width
-            val h = bank.height
-            buildWarpLut(w, h)
+            val w = asset.width
+            val h = asset.height
+            buildWarpAndShadeLut(w, h)
 
             val outFrame = reusedYuv!!
             val outY = outFrame.y
             val outU = outFrame.u
             val outV = outFrame.v
             val lut = warpLut
+            val sLut = shadeLut
 
-            val baseY = bank.baseYuv.y
-            val baseU = bank.baseYuv.u
-            val baseV = bank.baseYuv.v
-            val poseY = poseYuv?.y
-            val poseU = poseYuv?.u
-            val poseV = poseYuv?.v
-            val invAlpha = 256 - alpha
+            val baseY = asset.baseYuv.y
+            val baseU = asset.baseYuv.u
+            val baseV = asset.baseYuv.v
 
+            // Fast 1D LUT copy + 3D Lambertian micro-shading on Y plane
             val totalY = w * h
-            if (poseY != null && alpha > 0) {
-                for (i in 0 until totalY) {
-                    val sIdx = lut[i]
-                    val bVal = baseY[sIdx].toInt() and 0xFF
-                    val pVal = poseY[sIdx].toInt() and 0xFF
-                    outY[i] = ((bVal * invAlpha + pVal * alpha) shr 8).toByte()
-                }
-            } else {
-                for (i in 0 until totalY) {
-                    outY[i] = baseY[lut[i]]
-                }
+            for (i in 0 until totalY) {
+                val yRaw = baseY[lut[i]].toInt() and 0xFF
+                val shaded = (yRaw * sLut[i].toInt()) shr 8
+                outY[i] = shaded.coerceIn(16, 235).toByte()
             }
 
+            // Fast 4:2:0 chroma lookup reusing the same LUT
             val cw = (w + 1) / 2
             val ch = (h + 1) / 2
             var cIdx = 0
-            if (poseU != null && poseV != null && alpha > 0) {
-                for (cy in 0 until ch) {
-                    val yRow = (cy shl 1) * w
-                    for (cx in 0 until cw) {
-                        val sIdx = lut[yRow + (cx shl 1)]
-                        val scIdx = ((sIdx / w) shr 1) * cw + ((sIdx % w) shr 1)
-                        val bu = baseU[scIdx].toInt() and 0xFF
-                        val bv = baseV[scIdx].toInt() and 0xFF
-                        val pu = poseU[scIdx].toInt() and 0xFF
-                        val pv = poseV[scIdx].toInt() and 0xFF
-                        outU[cIdx] = ((bu * invAlpha + pu * alpha) shr 8).toByte()
-                        outV[cIdx] = ((bv * invAlpha + pv * alpha) shr 8).toByte()
-                        cIdx++
-                    }
-                }
-            } else {
-                for (cy in 0 until ch) {
-                    val yRow = (cy shl 1) * w
-                    for (cx in 0 until cw) {
-                        val sIdx = lut[yRow + (cx shl 1)]
-                        val scIdx = ((sIdx / w) shr 1) * cw + ((sIdx % w) shr 1)
-                        outU[cIdx] = baseU[scIdx]
-                        outV[cIdx] = baseV[scIdx]
-                        cIdx++
-                    }
+            for (cy in 0 until ch) {
+                val yRow = (cy shl 1) * w
+                for (cx in 0 until cw) {
+                    val sIdx = lut[yRow + (cx shl 1)]
+                    val scIdx = ((sIdx / w) shr 1) * cw + ((sIdx % w) shr 1)
+                    outU[cIdx] = baseU[scIdx]
+                    outV[cIdx] = baseV[scIdx]
+                    cIdx++
                 }
             }
 
@@ -794,23 +865,22 @@ object FaceWarpEngine {
         }
 
         fun renderPreviewPixels(
-            bank: FacePoseBank,
+            asset: FacePhotoAsset,
             ctrl: ControlState,
             nowMs: Long,
             outPixels: IntArray
         ) {
             step(ctrl, nowMs)
-            val (poseArgb, alpha) = pickPoseBlendArgb(bank)
-            computeMesh(ctrl, nowMs, useSoftWarpForAi = (poseArgb != null && alpha > 64))
+            compute6DMesh(ctrl)
 
-            val w = bank.width
-            val h = bank.height
-            val base = bank.baseArgb
+            val w = asset.width
+            val h = asset.height
+            val base = asset.baseArgb
             if (base.size < w * h || outPixels.size < w * h) return
 
-            buildWarpLut(w, h)
+            buildWarpAndShadeLut(w, h)
             val lut = warpLut
-            val invAlpha = 256 - alpha
+            val sLut = shadeLut
             val zoom = ctrl.zoom.coerceIn(0.6f, 2.2f)
             val invZoom = 1f / zoom
             val maxX = w - 1
@@ -828,17 +898,13 @@ object FaceWarpEngine {
                     if (ctrl.flipH) uNorm = 1f - uNorm
                     val ux = (((uNorm - 0.5f) * invZoom + 0.5f) * w).toInt().coerceIn(0, maxX)
 
-                    val sIdx = lut[vRow + ux]
-                    val bp = base[sIdx]
-                    outPixels[dstRow + x] = if (poseArgb != null && alpha > 0) {
-                        val pp = poseArgb[sIdx]
-                        val r = ((((bp shr 16) and 0xFF) * invAlpha + ((pp shr 16) and 0xFF) * alpha) shr 8)
-                        val g = ((((bp shr 8) and 0xFF) * invAlpha + ((pp shr 8) and 0xFF) * alpha) shr 8)
-                        val b = (((bp and 0xFF) * invAlpha + (pp and 0xFF) * alpha) shr 8)
-                        (0xFF shl 24) or (r shl 16) or (g shl 8) or b
-                    } else {
-                        bp
-                    }
+                    val mIdx = vRow + ux
+                    val bp = base[lut[mIdx]]
+                    val sh = sLut[mIdx].toInt()
+                    val r = ((((bp shr 16) and 0xFF) * sh) shr 8).coerceIn(0, 255)
+                    val g = ((((bp shr 8) and 0xFF) * sh) shr 8).coerceIn(0, 255)
+                    val b = (((bp and 0xFF) * sh) shr 8).coerceIn(0, 255)
+                    outPixels[dstRow + x] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
                 }
             }
         }

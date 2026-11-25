@@ -106,7 +106,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
 
         fun getControlState(packageName: String): ControlState {
             val now = System.currentTimeMillis()
-            if (now - lastControlReadMs < 100L) {
+            if (now - lastControlReadMs < 70L) {
                 return cachedControl
             }
             lastControlReadMs = now
@@ -216,7 +216,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         setOnPreparedListener { mp -> mp.start() }
                         prepareAsync()
                     }
-                    showToastOnce("ShizukuVCam v2.2: Active (Preview Stream)")
+                    showToastOnce("ShizukuVCam v2.3: Active (Preview Stream)")
                 } catch (t: Throwable) {
                     XposedBridge.log("$TAG: MediaPlayer bind error: ${t.message}")
                 }
@@ -278,22 +278,23 @@ class VirtualCamHook : IXposedHookLoadPackage {
 
             ensureActiveWorkerRunning(packageName, ctrl)
             val frame = if (ctrl.mode == "photo") {
-                showToastOnce("ShizukuVCam v2.2: Human-Motion Photo Mode")
+                showToastOnce("ShizukuVCam v2.3: Offline 6D Motion Active")
                 photoWorker?.latestFrame
             } else {
-                showToastOnce("ShizukuVCam v2.2: LivePortrait / Video Mode")
+                showToastOnce("ShizukuVCam v2.3: Offline Video Mode Active")
                 yuvVideoDecoder?.latestFrame
             }
 
-            val panX = if (ctrl.mode == "video") ctrl.yaw * 0.12f else 0f
-            val panY = if (ctrl.mode == "video") -ctrl.pitch * 0.12f else 0f
+            val panX = if (ctrl.mode == "video") ctrl.tx * 0.14f else 0f
+            val panY = if (ctrl.mode == "video") -ctrl.ty * 0.14f else 0f
+            val effZoom = if (ctrl.mode == "video") (ctrl.zoom + ctrl.tz * 0.25f).coerceIn(0.6f, 2.2f) else ctrl.zoom
             val transformSig = computeTransformSig(
                 srcW = frame?.width ?: 0,
                 srcH = frame?.height ?: 0,
                 dstW = dstW,
                 dstH = dstH,
                 rotation = ctrl.rotation,
-                zoom = ctrl.zoom,
+                zoom = effZoom,
                 flipH = ctrl.flipH,
                 flipV = ctrl.flipV,
                 panX = panX,
@@ -335,7 +336,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                             src = frame,
                             sig = transformSig,
                             rotation = ctrl.rotation,
-                            zoom = ctrl.zoom,
+                            zoom = effZoom,
                             flipH = ctrl.flipH,
                             flipV = ctrl.flipV,
                             panX = panX,
@@ -407,17 +408,16 @@ class VirtualCamHook : IXposedHookLoadPackage {
         fun start() {
             if (!running.compareAndSet(false, true)) return
             worker = Thread({
-                var bank: FacePoseBank? = null
+                var asset: FacePhotoAsset? = null
                 var loadedVer = -1L
                 try {
                     while (running.get()) {
                         val ctrl = getControlState(packageName)
-                        if (bank == null || ctrl.assetVersion != loadedVer) {
+                        if (asset == null || ctrl.assetVersion != loadedVer) {
                             val photoFile = resolveReadableFile(packageName, "vcam_photo.jpg")
                             if (photoFile != null) {
-                                bank = FaceWarpEngine.loadPoseBank(
+                                asset = FaceWarpEngine.loadPhotoAsset(
                                     basePath = photoFile.absolutePath,
-                                    poseDir = photoFile.parentFile,
                                     maxDim = 320,
                                     includeArgb = false
                                 )
@@ -425,10 +425,10 @@ class VirtualCamHook : IXposedHookLoadPackage {
                             }
                         }
 
-                        val activeBank = bank
-                        if (activeBank != null) {
+                        val activeAsset = asset
+                        if (activeAsset != null) {
                             latestFrame = animator.renderYuvFrame(
-                                bank = activeBank,
+                                asset = activeAsset,
                                 ctrl = ctrl,
                                 nowMs = System.currentTimeMillis()
                             )
@@ -445,7 +445,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 } finally {
                     running.set(false)
                 }
-            }, "ShizukuVCam-PhotoAnim").apply {
+            }, "ShizukuVCam-6DPhotoAnim").apply {
                 isDaemon = true
                 priority = Thread.NORM_PRIORITY + 1
                 start()
