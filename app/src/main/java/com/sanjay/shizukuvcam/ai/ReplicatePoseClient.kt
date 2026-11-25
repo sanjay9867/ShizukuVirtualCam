@@ -30,11 +30,6 @@ object ReplicatePoseClient {
         PoseSpec("vcam_pose_smile.jpg", "Gentle Smile", smile = 0.75)
     )
 
-    /**
-     * Generates a true photorealistic 3D human-motion MP4 video by transferring
-     * real head turns, blinks, and micro-expressions from a driving video onto
-     * your face photo using fofr/live-portrait on Replicate.
-     */
     fun generateLivePortraitVideo(
         apiToken: String,
         sourcePhotoFile: File,
@@ -121,6 +116,7 @@ object ReplicatePoseClient {
 
     private fun uploadFileToReplicate(token: String, file: File, mimeType: String): String {
         val boundary = "----ShizukuVCamBoundary" + System.currentTimeMillis()
+        val crlf = "\r\n"
         val conn = (URL("https://api.replicate.com/v1/files").openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
             doOutput = true
@@ -131,13 +127,9 @@ object ReplicatePoseClient {
         }
 
         DataOutputStream(conn.outputStream).use { out ->
-            out.writeBytes("--$boundary
-")
-            out.writeBytes("Content-Disposition: form-data; name="content"; filename="${file.name}"
-")
-            out.writeBytes("Content-Type: $mimeType
-
-")
+            out.writeBytes("--$boundary$crlf")
+            out.writeBytes("Content-Disposition: form-data; name=\"content\"; filename=\"${file.name}\"$crlf")
+            out.writeBytes("Content-Type: $mimeType$crlf$crlf")
             FileInputStream(file).use { fis ->
                 val buf = ByteArray(32768)
                 while (true) {
@@ -146,9 +138,7 @@ object ReplicatePoseClient {
                     out.write(buf, 0, read)
                 }
             }
-            out.writeBytes("
---$boundary--
-")
+            out.writeBytes("$crlf--$boundary--$crlf")
             out.flush()
         }
 
