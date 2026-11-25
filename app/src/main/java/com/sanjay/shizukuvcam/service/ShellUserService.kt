@@ -13,13 +13,29 @@ import kotlin.system.exitProcess
 class ShellUserService : IShellService.Stub() {
 
     companion object {
-        const val TMP_VIDEO_PATH = "/data/local/tmp/vcam_feed.mp4"
-        const val TMP_STATE_PATH = "/data/local/tmp/vcam_enabled"
-        const val TMP_ROTATION_PATH = "/data/local/tmp/vcam_rotation"
-        const val PUBLIC_DIR_PATH = "/storage/emulated/0/DCIM/Camera1"
-        const val PUBLIC_VIDEO_PATH = "$PUBLIC_DIR_PATH/vcam_feed.mp4"
-        const val PUBLIC_STATE_PATH = "$PUBLIC_DIR_PATH/vcam_enabled"
-        const val PUBLIC_ROTATION_PATH = "$PUBLIC_DIR_PATH/vcam_rotation"
+        const val TMP_DIR = "/data/local/tmp"
+        const val PUBLIC_DIR = "/storage/emulated/0/DCIM/Camera1"
+
+        private val ALLOWED_FILES = setOf(
+            "vcam_feed.mp4",
+            "vcam_photo.jpg",
+            "vcam_pose_left.jpg",
+            "vcam_pose_right.jpg",
+            "vcam_pose_up.jpg",
+            "vcam_pose_down.jpg",
+            "vcam_pose_blink.jpg",
+            "vcam_pose_smile.jpg",
+            "vcam_ctrl.txt"
+        )
+
+        private val POSE_FILES = listOf(
+            "vcam_pose_left.jpg",
+            "vcam_pose_right.jpg",
+            "vcam_pose_up.jpg",
+            "vcam_pose_down.jpg",
+            "vcam_pose_blink.jpg",
+            "vcam_pose_smile.jpg"
+        )
     }
 
     override fun destroy() {
@@ -38,33 +54,56 @@ class ShellUserService : IShellService.Stub() {
         }
     }
 
-    override fun deployVideoFd(pfd: ParcelFileDescriptor?): String {
-        if (pfd == null) return "ERR: Could not open selected video"
+    private fun isValidPackage(pkg: String?): Boolean {
+        return !pkg.isNullOrBlank() && pkg.matches(Regex("^[a-zA-Z0-9._]+$"))
+    }
+
+    private fun copyFileSafe(src: File, dst: File) {
+        if (!src.exists() || src.length() == 0L) return
+        dst.parentFile?.let { if (!it.exists()) it.mkdirs() }
+        FileInputStream(src).use { input ->
+            FileOutputStream(dst).use { output ->
+                input.copyTo(output, bufferSize = 65536)
+            }
+        }
+    }
+
+    override fun deployNamedFileFd(
+        pfd: ParcelFileDescriptor?,
+        fileName: String?,
+        activePackage: String?
+    ): String {
+        if (pfd == null) return "ERR: Null file descriptor"
+        if (fileName == null || !ALLOWED_FILES.contains(fileName)) {
+            return "ERR: Unsupported file name"
+        }
+
         return try {
-            val tmpDst = File(TMP_VIDEO_PATH)
+            val tmpDst = File(TMP_DIR, fileName)
             ParcelFileDescriptor.AutoCloseInputStream(pfd).use { input ->
                 FileOutputStream(tmpDst).use { output ->
                     input.copyTo(output, bufferSize = 65536)
                 }
             }
             if (!tmpDst.exists() || tmpDst.length() == 0L) {
-                return "ERR: Copied file is empty"
+                return "ERR: Empty file"
             }
             try {
-                Os.chmod(TMP_VIDEO_PATH, 0b110_100_100)
+                Os.chmod(tmpDst.absolutePath, 0b110_100_100)
             } catch (_: Throwable) {
             }
 
             try {
-                val pubDir = File(PUBLIC_DIR_PATH)
-                if (!pubDir.exists()) pubDir.mkdirs()
-                val pubDst = File(PUBLIC_VIDEO_PATH)
-                FileInputStream(tmpDst).use { input ->
-                    FileOutputStream(pubDst).use { output ->
-                        input.copyTo(output, bufferSize = 65536)
-                    }
-                }
+                copyFileSafe(tmpDst, File(PUBLIC_DIR, fileName))
             } catch (_: Throwable) {
+            }
+
+            if (isValidPackage(activePackage)) {
+                try {
+                    val pkgDir = File("/storage/emulated/0/Android/data/$activePackage/files")
+                    copyFileSafe(tmpDst, File(pkgDir, fileName))
+                } catch (_: Throwable) {
+                }
             }
 
             "OK"
@@ -73,43 +112,56 @@ class ShellUserService : IShellService.Stub() {
         }
     }
 
-    override fun setVirtualCamEnabled(enabled: Boolean): Boolean {
-        val value = if (enabled) "1" else "0"
+    override fun writeControlState(controlText: String?, activePackage: String?): Boolean {
+        val text = controlText ?: return false
         return try {
-            File(TMP_STATE_PATH).writeText(value)
+            val tmpFile = File(TMP_DIR, "vcam_ctrl.txt")
+            tmpFile.writeText(text)
             try {
-                Os.chmod(TMP_STATE_PATH, 0b110_100_100)
+                Os.chmod(tmpFile.absolutePath, 0b110_100_100)
             } catch (_: Throwable) {
             }
 
             try {
-                val pubDir = File(PUBLIC_DIR_PATH)
+                val pubDir = File(PUBLIC_DIR)
                 if (!pubDir.exists()) pubDir.mkdirs()
-                File(PUBLIC_STATE_PATH).writeText(value)
+                File(pubDir, "vcam_ctrl.txt").writeText(text)
             } catch (_: Throwable) {
+            }
+
+            if (isValidPackage(activePackage)) {
+                try {
+                    val pkgDir = File("/storage/emulated/0/Android/data/$activePackage/files")
+                    if (!pkgDir.exists()) pkgDir.mkdirs()
+                    File(pkgDir, "vcam_ctrl.txt").writeText(text)
+                } catch (_: Throwable) {
+                }
             }
             true
-        } catch (e: Exception) {
-            e.printStackTrace()
-            false
-        }
-    }
-
-    override fun isVirtualCamEnabled(): Boolean {
-        return try {
-            val tmpState = File(TMP_STATE_PATH)
-            val pubState = File(PUBLIC_STATE_PATH)
-            (tmpState.exists() && tmpState.readText().trim() == "1") ||
-                (pubState.exists() && pubState.readText().trim() == "1")
         } catch (_: Exception) {
             false
         }
     }
 
-    override fun hasDeployedVideo(): Boolean {
+    override fun readControlState(): String {
+        val candidates = listOf(
+            File(TMP_DIR, "vcam_ctrl.txt"),
+            File(PUBLIC_DIR, "vcam_ctrl.txt")
+        )
+        for (f in candidates) {
+            try {
+                if (f.exists() && f.length() > 0L) return f.readText()
+            } catch (_: Exception) {
+            }
+        }
+        return ""
+    }
+
+    override fun hasDeployedFile(fileName: String?): Boolean {
+        if (fileName == null || !ALLOWED_FILES.contains(fileName)) return false
         return try {
-            val tmpFile = File(TMP_VIDEO_PATH)
-            val pubFile = File(PUBLIC_VIDEO_PATH)
+            val tmpFile = File(TMP_DIR, fileName)
+            val pubFile = File(PUBLIC_DIR, fileName)
             (tmpFile.exists() && tmpFile.length() > 0L) ||
                 (pubFile.exists() && pubFile.length() > 0L)
         } catch (_: Exception) {
@@ -117,23 +169,14 @@ class ShellUserService : IShellService.Stub() {
         }
     }
 
-    override fun setRotationDegrees(degrees: Int): Boolean {
-        val normalized = when (degrees) {
-            90, 180, 270 -> degrees
-            else -> 0
-        }
-        val value = normalized.toString()
+    override fun clearAiPoses(activePackage: String?): Boolean {
         return try {
-            File(TMP_ROTATION_PATH).writeText(value)
-            try {
-                Os.chmod(TMP_ROTATION_PATH, 0b110_100_100)
-            } catch (_: Throwable) {
-            }
-            try {
-                val pubDir = File(PUBLIC_DIR_PATH)
-                if (!pubDir.exists()) pubDir.mkdirs()
-                File(PUBLIC_ROTATION_PATH).writeText(value)
-            } catch (_: Throwable) {
+            for (name in POSE_FILES) {
+                File(TMP_DIR, name).delete()
+                File(PUBLIC_DIR, name).delete()
+                if (isValidPackage(activePackage)) {
+                    File("/storage/emulated/0/Android/data/$activePackage/files", name).delete()
+                }
             }
             true
         } catch (_: Exception) {
@@ -141,49 +184,31 @@ class ShellUserService : IShellService.Stub() {
         }
     }
 
-    override fun getRotationDegrees(): Int {
-        return try {
-            val tmpFile = File(TMP_ROTATION_PATH)
-            val pubFile = File(PUBLIC_ROTATION_PATH)
-            val raw = when {
-                tmpFile.exists() -> tmpFile.readText().trim()
-                pubFile.exists() -> pubFile.readText().trim()
-                else -> "0"
-            }
-            raw.toIntOrNull() ?: 0
-        } catch (_: Exception) {
-            0
-        }
-    }
-
-    override fun prepareAndRestartPackage(packageName: String): String {
-        if (!packageName.matches(Regex("^[a-zA-Z0-9._]+$"))) {
+    override fun prepareAndRestartPackage(packageName: String?): String {
+        if (!isValidPackage(packageName)) {
             return "ERR: Invalid package name"
         }
+        val pkg = packageName!!
         return try {
-            val targetDir = File("/storage/emulated/0/Android/data/$packageName/files")
+            val targetDir = File("/storage/emulated/0/Android/data/$pkg/files")
             if (!targetDir.exists()) targetDir.mkdirs()
 
-            val srcVideo = File(TMP_VIDEO_PATH)
-            if (srcVideo.exists() && srcVideo.length() > 0L) {
-                FileInputStream(srcVideo).use { input ->
-                    FileOutputStream(File(targetDir, "vcam_feed.mp4")).use { output ->
-                        input.copyTo(output, bufferSize = 65536)
-                    }
+            for (fileName in ALLOWED_FILES) {
+                val src = File(TMP_DIR, fileName).takeIf { it.exists() && it.length() > 0L }
+                    ?: File(PUBLIC_DIR, fileName).takeIf { it.exists() && it.length() > 0L }
+                if (src != null) {
+                    copyFileSafe(src, File(targetDir, fileName))
                 }
             }
 
-            val enabledText = if (isVirtualCamEnabled()) "1" else "0"
-            File(targetDir, "vcam_enabled").writeText(enabledText)
-            File(targetDir, "vcam_rotation").writeText(getRotationDegrees().toString())
-
-            runCommand("pm grant $packageName android.permission.CAMERA")
-            runCommand("pm grant $packageName android.permission.READ_MEDIA_VIDEO")
-            runCommand("pm grant $packageName android.permission.READ_EXTERNAL_STORAGE")
-            runCommand("am force-stop $packageName")
+            runCommand("pm grant $pkg android.permission.CAMERA")
+            runCommand("pm grant $pkg android.permission.READ_MEDIA_IMAGES")
+            runCommand("pm grant $pkg android.permission.READ_MEDIA_VIDEO")
+            runCommand("pm grant $pkg android.permission.READ_EXTERNAL_STORAGE")
+            runCommand("am force-stop $pkg")
             "OK"
         } catch (e: Exception) {
-            runCommand("am force-stop $packageName")
+            runCommand("am force-stop $pkg")
             "ERR: ${e.message}"
         }
     }

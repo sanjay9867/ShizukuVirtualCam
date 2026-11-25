@@ -5,11 +5,10 @@ import android.os.ParcelFileDescriptor;
 interface IShellService {
     void destroy() = 16777114;
     String runCommand(String command) = 1;
-    String deployVideoFd(in ParcelFileDescriptor pfd) = 2;
-    boolean setVirtualCamEnabled(boolean enabled) = 3;
-    boolean isVirtualCamEnabled() = 4;
-    boolean hasDeployedVideo() = 5;
+    String deployNamedFileFd(in ParcelFileDescriptor pfd, String fileName, String activePackage) = 2;
+    boolean writeControlState(String controlText, String activePackage) = 3;
+    String readControlState() = 4;
+    boolean hasDeployedFile(String fileName) = 5;
     String prepareAndRestartPackage(String packageName) = 6;
-    boolean setRotationDegrees(int degrees) = 7;
-    int getRotationDegrees() = 8;
+    boolean clearAiPoses(String activePackage) = 7;
 }

@@ -3,161 +3,427 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:padding="20dp">
+    android:background="#0D5C3A"
+    android:fillViewport="true">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="vertical">
+        android:orientation="vertical"
+        android:padding="18dp">
 
-        <TextView
-            android:layout_width="wrap_content"
+        <!-- Header Row (Manual Mode + Shizuku Status) -->
+        <LinearLayout
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Shizuku VirtualCam v1.3"
-            android:textSize="26sp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:layout_marginBottom="12dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Manual Mode"
+                android:textColor="#FFFFFF"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvShizukuBadge"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:background="@drawable/bg_pill_dark"
+                android:paddingLeft="12dp"
+                android:paddingTop="6dp"
+                android:paddingRight="12dp"
+                android:paddingBottom="6dp"
+                android:text="● Checking..."
+                android:textColor="#2EE87A"
+                android:textSize="12sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <!-- Live Animated Preview Frame -->
+        <com.google.android.material.card.MaterialCardView
+            android:layout_width="match_parent"
+            android:layout_height="270dp"
+            android:layout_marginBottom="16dp"
+            app:cardBackgroundColor="#082418"
+            app:cardCornerRadius="20dp"
+            app:cardElevation="4dp"
+            app:strokeColor="#287C56"
+            app:strokeWidth="1.5dp">
+
+            <FrameLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <ImageView
+                    android:id="@+id/ivLivePreview"
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:scaleType="centerCrop"
+                    android:contentDescription="Live Virtual Face Preview" />
+
+                <TextView
+                    android:id="@+id/tvPreviewOverlayHint"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_gravity="center"
+                    android:gravity="center"
+                    android:padding="16dp"
+                    android:text="Upload a Face Photo below
+to activate Live Manual Mode"
+                    android:textColor="#A8DFC2"
+                    android:textSize="15sp" />
+            </FrameLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Flip + Zoom Control Row (Matches LiteCam Layout) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:layout_marginBottom="16dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Flip"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:layout_marginEnd="8dp" />
+
+            <Spinner
+                android:id="@+id/spinnerFlip"
+                android:layout_width="0dp"
+                android:layout_height="42dp"
+                android:layout_weight="1"
+                android:background="@drawable/bg_pill_dark"
+                android:paddingStart="10dp"
+                android:paddingEnd="10dp"
+                android:layout_marginEnd="12dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Zoom"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold"
+                android:layout_marginEnd="6dp" />
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="42dp"
+                android:background="@drawable/bg_pill_dark"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp">
+
+                <Button
+                    android:id="@+id/btnZoomMinus"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:padding="0dp"
+                    android:text="−"
+                    android:textColor="#2EE87A"
+                    android:textSize="20sp" />
+
+                <TextView
+                    android:id="@+id/tvZoomValue"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="1.0x"
+                    android:textColor="#D9F9E6"
+                    android:textSize="12sp"
+                    android:paddingStart="2dp"
+                    android:paddingEnd="2dp" />
+
+                <Button
+                    android:id="@+id/btnZoomPlus"
+                    style="@style/Widget.Material3.Button.TextButton"
+                    android:layout_width="40dp"
+                    android:layout_height="40dp"
+                    android:minWidth="0dp"
+                    android:padding="0dp"
+                    android:text="+"
+                    android:textColor="#2EE87A"
+                    android:textSize="20sp" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- Face Movement Circular D-Pad Section -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:layout_marginBottom="14dp">
+
+            <LinearLayout
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:orientation="vertical"
+                android:paddingEnd="8dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Face
+Movement"
+                    android:textColor="#FFFFFF"
+                    android:textSize="20sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="10dp" />
+
+                <Button
+                    android:id="@+id/btnBlink"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:backgroundTint="#082418"
+                    android:text="Blink"
+                    android:textColor="#2EE87A"
+                    android:textSize="13sp"
+                    android:layout_marginBottom="6dp" />
+
+                <Button
+                    android:id="@+id/btnSmile"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:backgroundTint="#082418"
+                    android:text="Smile"
+                    android:textColor="#2EE87A"
+                    android:textSize="13sp"
+                    android:layout_marginBottom="6dp" />
+
+                <Button
+                    android:id="@+id/btnIdleToggle"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:backgroundTint="#082418"
+                    android:text="Idle: ON"
+                    android:textColor="#D9F9E6"
+                    android:textSize="13sp" />
+            </LinearLayout>
+
+            <com.sanjay.shizukuvcam.ui.FaceDpadView
+                android:id="@+id/faceDpad"
+                android:layout_width="186dp"
+                android:layout_height="186dp" />
+        </LinearLayout>
+
+        <!-- Launch Floating Menu Over Brave -->
+        <Button
+            android:id="@+id/btnFloatOverlay"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginBottom="16dp"
+            android:backgroundTint="#1DB954"
+            android:text="Launch Floating Menu (Control Over Brave)"
+            android:textColor="#041F13"
             android:textStyle="bold" />
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="4dp"
-            android:layout_marginBottom="20dp"
-            android:text="Rootless Virtual Camera (Brave/Chrome YUV Frame Injection)"
-            android:textSize="14sp" />
-
-        <!-- Step 1: Shizuku -->
-        <com.google.android.material.card.MaterialCardView
+        <!-- Upload Photo / Video & Live Switch Panel -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="2dp">
+            android:background="@drawable/bg_card_panel"
+            android:orientation="vertical"
+            android:padding="14dp"
+            android:layout_marginBottom="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="1. Face Photo / Video Source"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tvFeedStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:layout_marginBottom="10dp"
+                android:text="Status: Upload a face photo or MP4 video"
+                android:textColor="#B9EBD0"
+                android:textSize="13sp" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="1. Shizuku Privileged Bridge"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvShizukuStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="Shizuku Status: Checking..."
-                    android:textSize="14sp" />
+                android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/btnGrantShizuku"
-                    android:layout_width="match_parent"
+                    android:id="@+id/btnUploadPhoto"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Connect / Grant Shizuku Permission" />
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:backgroundTint="#1DB954"
+                    android:text="Upload Face Photo"
+                    android:textColor="#041F13"
+                    android:textStyle="bold" />
+
+                <Button
+                    android:id="@+id/btnUploadVideo"
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:backgroundTint="#082418"
+                    android:text="Upload MP4 Video"
+                    android:textColor="#2EE87A" />
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
 
-        <!-- Step 2: Video Feed -->
-        <com.google.android.material.card.MaterialCardView
+            <com.google.android.material.materialswitch.MaterialSwitch
+                android:id="@+id/switchEnableVCam"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:text="Enable Virtual Camera Feed"
+                android:textColor="#FFFFFF"
+                android:textSize="15sp" />
+        </LinearLayout>
+
+        <!-- Cloud AI Neural Pose Studio (Optional Upgrade) -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="2dp">
+            android:background="@drawable/bg_card_panel"
+            android:orientation="vertical"
+            android:padding="14dp"
+            android:layout_marginBottom="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="2. Cloud AI Studio (Replicate Expression-Editor)"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="4dp"
+                android:text="Optional: Paste a Replicate token to generate real neural 3D Left/Right/Up/Down/Blink/Smile poses from your photo."
+                android:textColor="#B9EBD0"
+                android:textSize="12sp" />
+
+            <EditText
+                android:id="@+id/etReplicateToken"
+                android:layout_width="match_parent"
+                android:layout_height="46dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_pill_dark"
+                android:hint="r8_your_replicate_api_token"
+                android:inputType="textPassword"
+                android:paddingStart="14dp"
+                android:paddingEnd="14dp"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#6EA98C"
+                android:textSize="14sp" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="2. Deploy Video Feed &amp; Rotation"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
-
-                <TextView
-                    android:id="@+id/tvVideoStatus"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="6dp"
-                    android:text="Feed Status: Waiting for Shizuku..."
-                    android:textSize="14sp" />
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/btnPickVideo"
-                    android:layout_width="match_parent"
+                    android:id="@+id/btnGenerateAiPoses"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Select MP4 Video &amp; Deploy via Shizuku" />
+                    android:layout_weight="2"
+                    android:layout_marginEnd="6dp"
+                    android:backgroundTint="#1DB954"
+                    android:text="AI Generate 3D Poses"
+                    android:textColor="#041F13"
+                    android:textStyle="bold" />
 
-                <com.google.android.material.materialswitch.MaterialSwitch
-                    android:id="@+id/switchEnableVCam"
-                    android:layout_width="match_parent"
+                <Button
+                    android:id="@+id/btnClearAiPoses"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="12dp"
-                    android:text="Enable Virtual Camera Feed"
-                    android:textSize="15sp" />
-
-                <Spinner
-                    android:id="@+id/spinnerRotation"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="8dp" />
+                    android:layout_weight="1"
+                    android:backgroundTint="#082418"
+                    android:text="Reset"
+                    android:textColor="#FF9E9E" />
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
 
-        <!-- Step 3: Target App Management -->
-        <com.google.android.material.card.MaterialCardView
+        <!-- Target App Sync & Shizuku Panel -->
+        <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="2dp">
+            android:background="@drawable/bg_card_panel"
+            android:orientation="vertical"
+            android:padding="14dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="3. Target App &amp; Shizuku Sync"
+                android:textColor="#FFFFFF"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <Spinner
+                android:id="@+id/spinnerApps"
+                android:layout_width="match_parent"
+                android:layout_height="44dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/bg_pill_dark"
+                android:paddingStart="12dp"
+                android:paddingEnd="12dp" />
+
+            <Button
+                android:id="@+id/btnSyncTarget"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="10dp"
+                android:backgroundTint="#1DB954"
+                android:text="Sync to Target App &amp; Force-Stop"
+                android:textColor="#041F13"
+                android:textStyle="bold" />
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="3. Target App &amp; LSPatch Controls"
-                    android:textSize="16sp"
-                    android:textStyle="bold" />
-
-                <Spinner
-                    android:id="@+id/spinnerApps"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:layout_marginTop="8dp" />
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
 
                 <Button
-                    android:id="@+id/btnForceStopApp"
-                    style="@style/Widget.Material3.Button.OutlinedButton"
-                    android:layout_width="match_parent"
+                    android:id="@+id/btnReconnectShizuku"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Sync Video to App &amp; Force-Stop" />
+                    android:layout_weight="1"
+                    android:layout_marginEnd="6dp"
+                    android:backgroundTint="#082418"
+                    android:text="Reconnect Shizuku"
+                    android:textColor="#2EE87A" />
 
                 <Button
                     android:id="@+id/btnOpenLSPatch"
-                    style="@style/Widget.Material3.Button.TonalButton"
-                    android:layout_width="match_parent"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="8dp"
-                    android:text="Open LSPatch Manager" />
+                    android:layout_weight="1"
+                    android:layout_marginStart="6dp"
+                    android:backgroundTint="#082418"
+                    android:text="Open LSPatch"
+                    android:textColor="#2EE87A" />
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        </LinearLayout>
 
     </LinearLayout>
 </ScrollView>
