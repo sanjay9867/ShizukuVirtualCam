@@ -30,46 +30,26 @@ class ControlState {
 
     fun serialize(): String {
         return buildString {
-            append("enabled=").append(if (enabled) "1" else "0").append('
-')
-            append("mode=").append(mode).append('
-')
-            append("yaw=").append(yaw).append('
-')
-            append("pitch=").append(pitch).append('
-')
-            append("zoom=").append(zoom).append('
-')
-            append("flip_h=").append(if (flipH) "1" else "0").append('
-')
-            append("flip_v=").append(if (flipV) "1" else "0").append('
-')
-            append("rotation=").append(rotation).append('
-')
-            append("blink_seq=").append(blinkSeq).append('
-')
-            append("smile=").append(smile).append('
-')
-            append("auto_idle=").append(if (autoIdle) "1" else "0").append('
-')
-            append("auto_sweep=").append(if (autoSweep) "1" else "0").append('
-')
-            append("face_cx=").append(faceCx).append('
-')
-            append("face_cy=").append(faceCy).append('
-')
-            append("face_r=").append(faceR).append('
-')
-            append("eye_lx=").append(eyeLx).append('
-')
-            append("eye_ly=").append(eyeLy).append('
-')
-            append("eye_rx=").append(eyeRx).append('
-')
-            append("eye_ry=").append(eyeRy).append('
-')
-            append("ver=").append(assetVersion).append('
-')
+            append("enabled=").append(if (enabled) "1" else "0").append('\n')
+            append("mode=").append(mode).append('\n')
+            append("yaw=").append(yaw).append('\n')
+            append("pitch=").append(pitch).append('\n')
+            append("zoom=").append(zoom).append('\n')
+            append("flip_h=").append(if (flipH) "1" else "0").append('\n')
+            append("flip_v=").append(if (flipV) "1" else "0").append('\n')
+            append("rotation=").append(rotation).append('\n')
+            append("blink_seq=").append(blinkSeq).append('\n')
+            append("smile=").append(smile).append('\n')
+            append("auto_idle=").append(if (autoIdle) "1" else "0").append('\n')
+            append("auto_sweep=").append(if (autoSweep) "1" else "0").append('\n')
+            append("face_cx=").append(faceCx).append('\n')
+            append("face_cy=").append(faceCy).append('\n')
+            append("face_r=").append(faceR).append('\n')
+            append("eye_lx=").append(eyeLx).append('\n')
+            append("eye_ly=").append(eyeLy).append('\n')
+            append("eye_rx=").append(eyeRx).append('\n')
+            append("eye_ry=").append(eyeRy).append('\n')
+            append("ver=").append(assetVersion).append('\n')
         }
     }
 
