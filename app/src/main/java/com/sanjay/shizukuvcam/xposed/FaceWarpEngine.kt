@@ -18,6 +18,7 @@ class ControlState {
     @Volatile var blinkSeq: Long = 0L
     @Volatile var smile: Float = 0f      // 0f .. 1f
     @Volatile var autoIdle: Boolean = true
+    @Volatile var autoSweep: Boolean = false
     @Volatile var faceCx: Float = 0.50f
     @Volatile var faceCy: Float = 0.48f
     @Volatile var faceR: Float = 0.22f
@@ -29,25 +30,46 @@ class ControlState {
 
     fun serialize(): String {
         return buildString {
-            append("enabled=").append(if (enabled) "1" else "0").append('\n')
-            append("mode=").append(mode).append('\n')
-            append("yaw=").append(yaw).append('\n')
-            append("pitch=").append(pitch).append('\n')
-            append("zoom=").append(zoom).append('\n')
-            append("flip_h=").append(if (flipH) "1" else "0").append('\n')
-            append("flip_v=").append(if (flipV) "1" else "0").append('\n')
-            append("rotation=").append(rotation).append('\n')
-            append("blink_seq=").append(blinkSeq).append('\n')
-            append("smile=").append(smile).append('\n')
-            append("auto_idle=").append(if (autoIdle) "1" else "0").append('\n')
-            append("face_cx=").append(faceCx).append('\n')
-            append("face_cy=").append(faceCy).append('\n')
-            append("face_r=").append(faceR).append('\n')
-            append("eye_lx=").append(eyeLx).append('\n')
-            append("eye_ly=").append(eyeLy).append('\n')
-            append("eye_rx=").append(eyeRx).append('\n')
-            append("eye_ry=").append(eyeRy).append('\n')
-            append("ver=").append(assetVersion).append('\n')
+            append("enabled=").append(if (enabled) "1" else "0").append('
+')
+            append("mode=").append(mode).append('
+')
+            append("yaw=").append(yaw).append('
+')
+            append("pitch=").append(pitch).append('
+')
+            append("zoom=").append(zoom).append('
+')
+            append("flip_h=").append(if (flipH) "1" else "0").append('
+')
+            append("flip_v=").append(if (flipV) "1" else "0").append('
+')
+            append("rotation=").append(rotation).append('
+')
+            append("blink_seq=").append(blinkSeq).append('
+')
+            append("smile=").append(smile).append('
+')
+            append("auto_idle=").append(if (autoIdle) "1" else "0").append('
+')
+            append("auto_sweep=").append(if (autoSweep) "1" else "0").append('
+')
+            append("face_cx=").append(faceCx).append('
+')
+            append("face_cy=").append(faceCy).append('
+')
+            append("face_r=").append(faceR).append('
+')
+            append("eye_lx=").append(eyeLx).append('
+')
+            append("eye_ly=").append(eyeLy).append('
+')
+            append("eye_rx=").append(eyeRx).append('
+')
+            append("eye_ry=").append(eyeRy).append('
+')
+            append("ver=").append(assetVersion).append('
+')
         }
     }
 
@@ -63,6 +85,7 @@ class ControlState {
         blinkSeq = other.blinkSeq
         smile = other.smile
         autoIdle = other.autoIdle
+        autoSweep = other.autoSweep
         faceCx = other.faceCx
         faceCy = other.faceCy
         faceR = other.faceR
@@ -97,6 +120,7 @@ class ControlState {
                     "blink_seq" -> state.blinkSeq = value.toLongOrNull() ?: 0L
                     "smile" -> state.smile = (value.toFloatOrNull() ?: 0f).coerceIn(0f, 1f)
                     "auto_idle" -> state.autoIdle = value == "1"
+                    "auto_sweep" -> state.autoSweep = value == "1"
                     "face_cx" -> state.faceCx = (value.toFloatOrNull() ?: 0.50f).coerceIn(0.15f, 0.85f)
                     "face_cy" -> state.faceCy = (value.toFloatOrNull() ?: 0.48f).coerceIn(0.15f, 0.85f)
                     "face_r" -> state.faceR = (value.toFloatOrNull() ?: 0.22f).coerceIn(0.08f, 0.45f)
@@ -117,7 +141,8 @@ class YuvFrame(
     val height: Int,
     val y: ByteArray,
     val u: ByteArray,
-    val v: ByteArray
+    val v: ByteArray,
+    @Volatile var seq: Long = 0L
 )
 
 class FacePoseBank(
@@ -144,8 +169,8 @@ class FacePoseBank(
 
 object FaceWarpEngine {
 
-    private const val GRID_X = 24
-    private const val GRID_Y = 24
+    private const val GRID_X = 20
+    private const val GRID_Y = 20
 
     fun loadPoseBank(
         basePath: String,
@@ -271,7 +296,7 @@ object FaceWarpEngine {
                 }
             }
         }
-        return YuvFrame(w, h, yArr, uArr, vArr)
+        return YuvFrame(w, h, yArr, uArr, vArr, 1L)
     }
 
     class MotionAnimator {
@@ -282,30 +307,49 @@ object FaceWarpEngine {
 
         private var lastBlinkSeq = 0L
         private var blinkStartMs = 0L
-        private var nextAutoBlinkMs = System.currentTimeMillis() + 3200L
+        private var nextAutoBlinkMs = System.currentTimeMillis() + 3000L
+        private var frameCounter = 0L
 
         private val gridDx = FloatArray((GRID_X + 1) * (GRID_Y + 1))
         private val gridDy = FloatArray((GRID_X + 1) * (GRID_Y + 1))
 
+        // Reusable buffers to eliminate GC churn and lag
+        private var cachedW = 0
+        private var cachedH = 0
+        private var warpLut = IntArray(0)
+        private var reusedYuv: YuvFrame? = null
+
         fun step(ctrl: ControlState, nowMs: Long) {
-            val lerp = 0.24f
-            curYaw += (ctrl.yaw - curYaw) * lerp
-            curPitch += (ctrl.pitch - curPitch) * lerp
-            curSmile += (ctrl.smile - curSmile) * lerp
+            var targetYaw = ctrl.yaw
+            var targetPitch = ctrl.pitch
+
+            // Smooth hands-free Left -> Right -> Up -> Down -> Center head sweep
+            if (ctrl.autoSweep) {
+                val cycleSec = ((nowMs % 6400L) / 1000f) // 6.4-second smooth cycle
+                val phase = (cycleSec / 6.4f) * (2.0 * Math.PI)
+                // Horizontal figure-8 sweep (Left/Right) + vertical nod (Up/Down)
+                targetYaw = (sin(phase) * 0.88).toFloat()
+                targetPitch = (sin(phase * 2.0) * 0.68).toFloat()
+            }
+
+            val lerp = if (ctrl.autoSweep) 0.22f else 0.32f
+            curYaw += (targetYaw - curYaw) * lerp
+            curPitch += (targetPitch - curPitch) * lerp
+            curSmile += (ctrl.smile - curSmile) * 0.28f
 
             if (ctrl.blinkSeq != lastBlinkSeq) {
                 lastBlinkSeq = ctrl.blinkSeq
                 blinkStartMs = nowMs
             }
 
-            if (ctrl.autoIdle && nowMs >= nextAutoBlinkMs && (nowMs - blinkStartMs) > 600L) {
+            if ((ctrl.autoIdle || ctrl.autoSweep) && nowMs >= nextAutoBlinkMs && (nowMs - blinkStartMs) > 650L) {
                 blinkStartMs = nowMs
-                nextAutoBlinkMs = nowMs + 2800L + ((nowMs * 13L) % 2400L)
+                nextAutoBlinkMs = nowMs + 2600L + ((nowMs * 13L) % 2200L)
             }
 
             val blinkElapsed = nowMs - blinkStartMs
-            curBlink = if (blinkElapsed in 0L..260L) {
-                val p = blinkElapsed / 260f
+            curBlink = if (blinkElapsed in 0L..250L) {
+                val p = blinkElapsed / 250f
                 sin(p * Math.PI).toFloat().coerceIn(0f, 1f)
             } else {
                 0f
@@ -314,9 +358,9 @@ object FaceWarpEngine {
 
         private fun computeMesh(ctrl: ControlState, nowMs: Long, useSoftWarpForAi: Boolean) {
             val t = (nowMs % 600_000L) * 0.001f
-            val idleYaw = if (ctrl.autoIdle) sin(t * 0.85f) * 0.045f else 0f
-            val idlePitch = if (ctrl.autoIdle) sin(t * 1.45f) * 0.035f else 0f
-            val breathY = if (ctrl.autoIdle) sin(t * 1.75f) * 0.006f else 0f
+            val idleYaw = if (ctrl.autoIdle && !ctrl.autoSweep) sin(t * 0.85f) * 0.045f else 0f
+            val idlePitch = if (ctrl.autoIdle && !ctrl.autoSweep) sin(t * 1.45f) * 0.035f else 0f
+            val breathY = if (ctrl.autoIdle || ctrl.autoSweep) sin(t * 1.75f) * 0.006f else 0f
 
             val warpScale = if (useSoftWarpForAi) 0.28f else 1.0f
             val effYaw = (curYaw * warpScale + idleYaw).coerceIn(-1.2f, 1.2f)
@@ -348,25 +392,22 @@ object FaceWarpEngine {
                         val falloff = 1f - (r2 / 2.2f)
                         val w = falloff * falloff
 
-                        // 2.5D spherical head turn (inverse mapping: src = dst + d)
-                        dx -= effYaw * rx * 0.24f * w
+                        dx -= effYaw * rx * 0.25f * w
                         dx += effYaw * nx * nx * rx * 0.06f * w
 
-                        dy += effPitch * ry * 0.22f * w
+                        dy += effPitch * ry * 0.23f * w
                         dy -= effPitch * ny * ny * ry * 0.05f * w
 
-                        // Subtle foreshortening across cheekbones
                         dx += (u - cx) * (effYaw * nx * 0.14f) * w
                         dy += (v - cy) * (effPitch * ny * 0.10f) * w
                     }
 
-                    // Natural upper-eyelid pull-down blink over both detected eyes
                     if (effBlink > 0.02f) {
                         val lex = (u - ctrl.eyeLx) / (eyeR * 1.35f)
                         val ley = (v - ctrl.eyeLy) / (eyeR * 0.85f)
                         val le2 = lex * lex + ley * ley
                         if (le2 < 1.3f) {
-                            val ew = (1f - le2 / 1.3f)
+                            val ew = 1f - le2 / 1.3f
                             dy -= effBlink * eyeR * 0.85f * ew * ew
                         }
 
@@ -374,18 +415,17 @@ object FaceWarpEngine {
                         val rey = (v - ctrl.eyeRy) / (eyeR * 0.85f)
                         val re2 = rex * rex + rey * rey
                         if (re2 < 1.3f) {
-                            val ew = (1f - re2 / 1.3f)
+                            val ew = 1f - re2 / 1.3f
                             dy -= effBlink * eyeR * 0.85f * ew * ew
                         }
                     }
 
-                    // Gentle smile corner lift
                     if (effSmile > 0.02f) {
                         val mx = (u - cx) / mouthRx
                         val my = (v - mouthY) / (mouthRx * 0.55f)
                         val m2 = mx * mx + my * my
                         if (m2 < 1.4f) {
-                            val mw = (1f - m2 / 1.4f)
+                            val mw = 1f - m2 / 1.4f
                             val cornerFactor = abs(mx).coerceIn(0f, 1.2f)
                             dy += effSmile * mouthRx * 0.22f * cornerFactor * mw * mw
                             dx -= effSmile * mx * mouthRx * 0.10f * mw * mw
@@ -399,30 +439,79 @@ object FaceWarpEngine {
             }
         }
 
-        private fun sampleMeshOffset(u: Float, v: Float, out: FloatArray) {
-            val fx = (u * GRID_X).coerceIn(0f, GRID_X - 0.0001f)
-            val fy = (v * GRID_Y).coerceIn(0f, GRID_Y - 0.0001f)
-            val ix = fx.toInt()
-            val iy = fy.toInt()
-            val tx = fx - ix
-            val ty = fy - iy
+        // Builds a single flat w*h source index LUT using scanline-interpolated fixed-point math
+        private fun buildWarpLut(w: Int, h: Int) {
+            if (cachedW != w || cachedH != h || warpLut.size != w * h) {
+                cachedW = w
+                cachedH = h
+                warpLut = IntArray(w * h)
+                val cw = (w + 1) / 2
+                val ch = (h + 1) / 2
+                reusedYuv = YuvFrame(w, h, ByteArray(w * h), ByteArray(cw * ch), ByteArray(cw * ch), 0L)
+            }
+
             val cols = GRID_X + 1
-            val i00 = iy * cols + ix
-            val i10 = i00 + 1
-            val i01 = i00 + cols
-            val i11 = i01 + 1
+            val maxX = w - 1
+            val maxY = h - 1
+            val lut = warpLut
 
-            val topDx = gridDx[i00] + (gridDx[i10] - gridDx[i00]) * tx
-            val botDx = gridDx[i01] + (gridDx[i11] - gridDx[i01]) * tx
-            out[0] = topDx + (botDx - topDx) * ty
+            for (gy in 0 until GRID_Y) {
+                val yStart = (gy * h) / GRID_Y
+                val yEnd = ((gy + 1) * h) / GRID_Y
+                val cellH = (yEnd - yStart).coerceAtLeast(1)
+                val row0 = gy * cols
+                val row1 = row0 + cols
 
-            val topDy = gridDy[i00] + (gridDy[i10] - gridDy[i00]) * tx
-            val botDy = gridDy[i01] + (gridDy[i11] - gridDy[i01]) * tx
-            out[1] = topDy + (botDy - topDy) * ty
+                for (gx in 0 until GRID_X) {
+                    val xStart = (gx * w) / GRID_X
+                    val xEnd = ((gx + 1) * w) / GRID_X
+                    val cellW = (xEnd - xStart).coerceAtLeast(1)
+
+                    val i00 = row0 + gx
+                    val i10 = i00 + 1
+                    val i01 = row1 + gx
+                    val i11 = i01 + 1
+
+                    val dx00 = gridDx[i00] * w
+                    val dx10 = gridDx[i10] * w
+                    val dx01 = gridDx[i01] * w
+                    val dx11 = gridDx[i11] * w
+
+                    val dy00 = gridDy[i00] * h
+                    val dy10 = gridDy[i10] * h
+                    val dy01 = gridDy[i01] * h
+                    val dy11 = gridDy[i11] * h
+
+                    val invCellH = 1f / cellH
+                    val invCellW = 1f / cellW
+
+                    for (y in yStart until yEnd) {
+                        val ty = (y - yStart) * invCellH
+                        val leftDx = dx00 + (dx01 - dx00) * ty
+                        val rightDx = dx10 + (dx11 - dx10) * ty
+                        val leftDy = dy00 + (dy01 - dy00) * ty
+                        val rightDy = dy10 + (dy11 - dy10) * ty
+
+                        var curDxFp = ((xStart + leftDx) * 65536f).toInt()
+                        val stepDxFp = (((rightDx - leftDx) * invCellW + 1f) * 65536f).toInt()
+
+                        var curDyFp = ((y + leftDy) * 65536f).toInt()
+                        val stepDyFp = (((rightDy - leftDy) * invCellW) * 65536f).toInt()
+
+                        var dstIdx = y * w + xStart
+                        for (x in xStart until xEnd) {
+                            val sx = (curDxFp shr 16).coerceIn(0, maxX)
+                            val sy = (curDyFp shr 16).coerceIn(0, maxY)
+                            lut[dstIdx++] = sy * w + sx
+                            curDxFp += stepDxFp
+                            curDyFp += stepDyFp
+                        }
+                    }
+                }
+            }
         }
 
         private fun pickPoseBlendYuv(bank: FacePoseBank): Pair<YuvFrame?, Int> {
-            // Returns (poseFrame, alpha0..256) prioritizing strongest active expression/direction
             if (curBlink > 0.25f && bank.blinkYuv != null) {
                 return bank.blinkYuv to (curBlink * 256f).toInt().coerceIn(0, 256)
             }
@@ -479,11 +568,13 @@ object FaceWarpEngine {
 
             val w = bank.width
             val h = bank.height
-            val cw = (w + 1) / 2
-            val ch = (h + 1) / 2
-            val outY = ByteArray(w * h)
-            val outU = ByteArray(cw * ch)
-            val outV = ByteArray(cw * ch)
+            buildWarpLut(w, h)
+
+            val outFrame = reusedYuv!!
+            val outY = outFrame.y
+            val outU = outFrame.u
+            val outV = outFrame.v
+            val lut = warpLut
 
             val baseY = bank.baseYuv.y
             val baseU = bank.baseYuv.u
@@ -493,60 +584,56 @@ object FaceWarpEngine {
             val poseV = poseYuv?.v
             val invAlpha = 256 - alpha
 
-            val off = FloatArray(2)
-            val maxX = w - 1
-            val maxY = h - 1
-            val invW = 1f / w
-            val invH = 1f / h
-
-            for (y in 0 until h) {
-                val v = y * invH
-                val rowOff = y * w
-                for (x in 0 until w) {
-                    val u = x * invW
-                    sampleMeshOffset(u, v, off)
-                    val sx = ((u + off[0]) * w).toInt().coerceIn(0, maxX)
-                    val sy = ((v + off[1]) * h).toInt().coerceIn(0, maxY)
-                    val sIdx = sy * w + sx
+            // Fast 1D LUT copy for Y plane
+            val totalY = w * h
+            if (poseY != null && alpha > 0) {
+                for (i in 0 until totalY) {
+                    val sIdx = lut[i]
                     val bVal = baseY[sIdx].toInt() and 0xFF
-                    outY[rowOff + x] = if (poseY != null && alpha > 0) {
-                        val pVal = poseY[sIdx].toInt() and 0xFF
-                        ((bVal * invAlpha + pVal * alpha) shr 8).toByte()
-                    } else {
-                        bVal.toByte()
+                    val pVal = poseY[sIdx].toInt() and 0xFF
+                    outY[i] = ((bVal * invAlpha + pVal * alpha) shr 8).toByte()
+                }
+            } else {
+                for (i in 0 until totalY) {
+                    outY[i] = baseY[lut[i]]
+                }
+            }
+
+            // Fast 4:2:0 subsampled LUT lookup for U and V planes (reuses Y LUT!)
+            val cw = (w + 1) / 2
+            val ch = (h + 1) / 2
+            var cIdx = 0
+            if (poseU != null && poseV != null && alpha > 0) {
+                for (cy in 0 until ch) {
+                    val yRow = (cy shl 1) * w
+                    for (cx in 0 until cw) {
+                        val sIdx = lut[yRow + (cx shl 1)]
+                        val scIdx = ((sIdx / w) shr 1) * cw + ((sIdx % w) shr 1)
+                        val bu = baseU[scIdx].toInt() and 0xFF
+                        val bv = baseV[scIdx].toInt() and 0xFF
+                        val pu = poseU[scIdx].toInt() and 0xFF
+                        val pv = poseV[scIdx].toInt() and 0xFF
+                        outU[cIdx] = ((bu * invAlpha + pu * alpha) shr 8).toByte()
+                        outV[cIdx] = ((bv * invAlpha + pv * alpha) shr 8).toByte()
+                        cIdx++
+                    }
+                }
+            } else {
+                for (cy in 0 until ch) {
+                    val yRow = (cy shl 1) * w
+                    for (cx in 0 until cw) {
+                        val sIdx = lut[yRow + (cx shl 1)]
+                        val scIdx = ((sIdx / w) shr 1) * cw + ((sIdx % w) shr 1)
+                        outU[cIdx] = baseU[scIdx]
+                        outV[cIdx] = baseV[scIdx]
+                        cIdx++
                     }
                 }
             }
 
-            val maxCx = cw - 1
-            val maxCy = ch - 1
-            val invCw = 1f / cw
-            val invCh = 1f / ch
-
-            for (y in 0 until ch) {
-                val v = y * invCh
-                val rowOff = y * cw
-                for (x in 0 until cw) {
-                    val u = x * invCw
-                    sampleMeshOffset(u, v, off)
-                    val sx = ((u + off[0]) * cw).toInt().coerceIn(0, maxCx)
-                    val sy = ((v + off[1]) * ch).toInt().coerceIn(0, maxCy)
-                    val sIdx = sy * cw + sx
-                    val bu = baseU[sIdx].toInt() and 0xFF
-                    val bv = baseV[sIdx].toInt() and 0xFF
-                    if (poseU != null && poseV != null && alpha > 0) {
-                        val pu = poseU[sIdx].toInt() and 0xFF
-                        val pv = poseV[sIdx].toInt() and 0xFF
-                        outU[rowOff + x] = ((bu * invAlpha + pu * alpha) shr 8).toByte()
-                        outV[rowOff + x] = ((bv * invAlpha + pv * alpha) shr 8).toByte()
-                    } else {
-                        outU[rowOff + x] = bu.toByte()
-                        outV[rowOff + x] = bv.toByte()
-                    }
-                }
-            }
-
-            return YuvFrame(w, h, outY, outU, outV)
+            frameCounter++
+            outFrame.seq = frameCounter
+            return outFrame
         }
 
         fun renderPreviewPixels(
@@ -564,33 +651,29 @@ object FaceWarpEngine {
             val base = bank.baseArgb
             if (base.size < w * h || outPixels.size < w * h) return
 
+            buildWarpLut(w, h)
+            val lut = warpLut
             val invAlpha = 256 - alpha
-            val off = FloatArray(2)
+            val zoom = ctrl.zoom.coerceIn(0.6f, 2.2f)
+            val invZoom = 1f / zoom
             val maxX = w - 1
             val maxY = h - 1
-            val invW = 1f / w
-            val invH = 1f / h
-            val zoom = ctrl.zoom.coerceIn(0.6f, 2.2f)
 
             for (y in 0 until h) {
-                val rawV = y * invH
-                val vFlip = if (ctrl.flipV) (1f - rawV) else rawV
-                val vZoom = (vFlip - 0.5f) / zoom + 0.5f
-                val rowOff = y * w
+                var vNorm = y.toFloat() / h
+                if (ctrl.flipV) vNorm = 1f - vNorm
+                val vy = (((vNorm - 0.5f) * invZoom + 0.5f) * h).toInt().coerceIn(0, maxY)
+                val vRow = vy * w
+                val dstRow = y * w
+
                 for (x in 0 until w) {
-                    val rawU = x * invW
-                    val uFlip = if (ctrl.flipH) (1f - rawU) else rawU
-                    val uZoom = (uFlip - 0.5f) / zoom + 0.5f
+                    var uNorm = x.toFloat() / w
+                    if (ctrl.flipH) uNorm = 1f - uNorm
+                    val ux = (((uNorm - 0.5f) * invZoom + 0.5f) * w).toInt().coerceIn(0, maxX)
 
-                    val clampedU = uZoom.coerceIn(0f, 1f)
-                    val clampedV = vZoom.coerceIn(0f, 1f)
-                    sampleMeshOffset(clampedU, clampedV, off)
-
-                    val sx = ((clampedU + off[0]) * w).toInt().coerceIn(0, maxX)
-                    val sy = ((clampedV + off[1]) * h).toInt().coerceIn(0, maxY)
-                    val sIdx = sy * w + sx
+                    val sIdx = lut[vRow + ux]
                     val bp = base[sIdx]
-                    outPixels[rowOff + x] = if (poseArgb != null && alpha > 0) {
+                    outPixels[dstRow + x] = if (poseArgb != null && alpha > 0) {
                         val pp = poseArgb[sIdx]
                         val r = ((((bp shr 16) and 0xFF) * invAlpha + ((pp shr 16) and 0xFF) * alpha) shr 8)
                         val g = ((((bp shr 8) and 0xFF) * invAlpha + ((pp shr 8) and 0xFF) * alpha) shr 8)

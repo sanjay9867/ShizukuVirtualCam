@@ -10,6 +10,8 @@ import rikka.shizuku.Shizuku
 import java.io.File
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
 
 object ShizukuBridge {
     @Volatile
@@ -26,6 +28,8 @@ object ShizukuBridge {
     val state: ControlState = ControlState()
 
     private val ioExecutor = Executors.newSingleThreadExecutor()
+    private val pendingPayload = AtomicReference<String?>(null)
+    private val isFlushing = AtomicBoolean(false)
     private val statusListeners = CopyOnWriteArrayList<(Boolean) -> Unit>()
     private val stateListeners = CopyOnWriteArrayList<() -> Unit>()
 
@@ -112,14 +116,26 @@ object ShizukuBridge {
         }
     }
 
+    // Coalesces rapid D-pad updates so Binder IPC never backs up or lags
     fun pushControlState() {
-        val serialized = state.serialize()
-        val pkg = activeTargetPackage
+        pendingPayload.set(state.serialize())
         notifyStateChanged()
-        ioExecutor.execute {
-            try {
-                service?.writeControlState(serialized, pkg)
-            } catch (_: Throwable) {
+        if (isFlushing.compareAndSet(false, true)) {
+            ioExecutor.execute {
+                try {
+                    while (true) {
+                        val payload = pendingPayload.getAndSet(null) ?: break
+                        try {
+                            service?.writeControlState(payload, activeTargetPackage)
+                        } catch (_: Throwable) {
+                        }
+                    }
+                } finally {
+                    isFlushing.set(false)
+                    if (pendingPayload.get() != null) {
+                        pushControlState()
+                    }
+                }
             }
         }
     }

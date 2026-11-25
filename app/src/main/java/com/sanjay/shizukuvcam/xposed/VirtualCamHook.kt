@@ -54,16 +54,21 @@ class VirtualCamHook : IXposedHookLoadPackage {
         private var photoWorker: PhotoAnimWorker? = null
 
         private var cachedControl: ControlState = ControlState()
+        private var cachedCtrlFile: File? = null
         private var lastControlReadMs = 0L
         private var nextTexId = 100
         private var lastToastMs = 0L
 
         private var slotIndex = 0
         private val bufferSlots = arrayOfNulls<DirectYuvBuffers>(2)
+        private var lastRenderedSeq = -1L
+        private var lastRenderedSrc: YuvFrame? = null
+        private var lastTransformSig = 0
+        private var lastSlot: DirectYuvBuffers? = null
 
         private fun showToastOnce(message: String) {
             val now = System.currentTimeMillis()
-            if (now - lastToastMs < 4000L) return
+            if (now - lastToastMs < 4500L) return
             lastToastMs = now
             try {
                 val app = AndroidAppHelper.currentApplication() ?: return
@@ -100,23 +105,24 @@ class VirtualCamHook : IXposedHookLoadPackage {
 
         fun getControlState(packageName: String): ControlState {
             val now = System.currentTimeMillis()
-            if (now - lastControlReadMs < 60L) {
+            if (now - lastControlReadMs < 100L) {
                 return cachedControl
             }
             lastControlReadMs = now
-            val ctrlFile = resolveReadableFile(packageName, "vcam_ctrl.txt")
+            var ctrlFile = cachedCtrlFile
+            if (ctrlFile == null || !ctrlFile.exists() || !ctrlFile.canRead()) {
+                ctrlFile = resolveReadableFile(packageName, "vcam_ctrl.txt")
+                cachedCtrlFile = ctrlFile
+            }
             if (ctrlFile != null) {
                 try {
                     cachedControl = ControlState.parse(ctrlFile.readText())
                     return cachedControl
                 } catch (_: Throwable) {
+                    cachedCtrlFile = null
                 }
             }
             return cachedControl
-        }
-
-        fun isVirtualCamActive(packageName: String): Boolean {
-            return getControlState(packageName).enabled
         }
 
         private fun isDummySurface(surface: Surface): Boolean {
@@ -187,6 +193,8 @@ class VirtualCamHook : IXposedHookLoadPackage {
 
                 try { photoWorker?.stop() } catch (_: Throwable) {}
                 photoWorker = null
+                lastRenderedSrc = null
+                lastRenderedSeq = -1L
             }
         }
 
@@ -202,7 +210,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         setOnPreparedListener { mp -> mp.start() }
                         prepareAsync()
                     }
-                    showToastOnce("ShizukuVCam v2: Active (Preview Stream)")
+                    showToastOnce("ShizukuVCam v2.1: Active (Preview Stream)")
                 } catch (t: Throwable) {
                     XposedBridge.log("$TAG: MediaPlayer bind error: ${t.message}")
                 }
@@ -264,43 +272,80 @@ class VirtualCamHook : IXposedHookLoadPackage {
 
             ensureActiveWorkerRunning(packageName, ctrl)
             val frame = if (ctrl.mode == "photo") {
-                showToastOnce("ShizukuVCam v2: Live AI Photo Mode")
+                showToastOnce("ShizukuVCam v2.1: Live AI Photo Mode")
                 photoWorker?.latestFrame
             } else {
-                showToastOnce("ShizukuVCam v2: Live Video Mode")
+                showToastOnce("ShizukuVCam v2.1: Live Video Mode")
                 yuvVideoDecoder?.latestFrame
             }
+
+            val panX = if (ctrl.mode == "video") ctrl.yaw * 0.12f else 0f
+            val panY = if (ctrl.mode == "video") -ctrl.pitch * 0.12f else 0f
+            val transformSig = computeTransformSig(
+                srcW = frame?.width ?: 0,
+                srcH = frame?.height ?: 0,
+                dstW = dstW,
+                dstH = dstH,
+                rotation = ctrl.rotation,
+                zoom = ctrl.zoom,
+                flipH = ctrl.flipH,
+                flipV = ctrl.flipV,
+                panX = panX,
+                panY = panY
+            )
 
             val yOv: PlaneOverride
             val uOv: PlaneOverride
             val vOv: PlaneOverride
 
             synchronized(lock) {
-                val idx = slotIndex
-                slotIndex = (slotIndex + 1) and 1
-                var slot = bufferSlots[idx]
-                if (slot == null || slot.w != dstW || slot.h != dstH) {
-                    slot = DirectYuvBuffers(dstW, dstH)
-                    bufferSlots[idx] = slot
-                }
-
-                if (frame == null) {
-                    slot.fillBlack()
+                // Fast-path: if exact same frame & camera transform already filled into slot, reuse with 0 CPU!
+                val cachedSlot = lastSlot
+                if (frame != null &&
+                    cachedSlot != null &&
+                    cachedSlot.w == dstW &&
+                    cachedSlot.h == dstH &&
+                    frame === lastRenderedSrc &&
+                    frame.seq == lastRenderedSeq &&
+                    transformSig == lastTransformSig
+                ) {
+                    yOv = PlaneOverride(cachedSlot.yBuf.duplicate().apply { rewind() }, dstW, 1)
+                    uOv = PlaneOverride(cachedSlot.uBuf.duplicate().apply { rewind() }, cachedSlot.cw, 1)
+                    vOv = PlaneOverride(cachedSlot.vBuf.duplicate().apply { rewind() }, cachedSlot.cw, 1)
                 } else {
-                    slot.fillFromFrame(
-                        src = frame,
-                        rotation = ctrl.rotation,
-                        zoom = ctrl.zoom,
-                        flipH = ctrl.flipH,
-                        flipV = ctrl.flipV,
-                        panX = if (ctrl.mode == "video") ctrl.yaw * 0.12f else 0f,
-                        panY = if (ctrl.mode == "video") -ctrl.pitch * 0.12f else 0f
-                    )
-                }
+                    val idx = slotIndex
+                    slotIndex = (slotIndex + 1) and 1
+                    var slot = bufferSlots[idx]
+                    if (slot == null || slot.w != dstW || slot.h != dstH) {
+                        slot = DirectYuvBuffers(dstW, dstH)
+                        bufferSlots[idx] = slot
+                    }
 
-                yOv = PlaneOverride(slot.yBuf.duplicate().apply { rewind() }, dstW, 1)
-                uOv = PlaneOverride(slot.uBuf.duplicate().apply { rewind() }, slot.cw, 1)
-                vOv = PlaneOverride(slot.vBuf.duplicate().apply { rewind() }, slot.cw, 1)
+                    if (frame == null) {
+                        slot.fillBlack()
+                        lastRenderedSrc = null
+                        lastRenderedSeq = -1L
+                    } else {
+                        slot.fillFromFrameFast(
+                            src = frame,
+                            sig = transformSig,
+                            rotation = ctrl.rotation,
+                            zoom = ctrl.zoom,
+                            flipH = ctrl.flipH,
+                            flipV = ctrl.flipV,
+                            panX = panX,
+                            panY = panY
+                        )
+                        lastRenderedSrc = frame
+                        lastRenderedSeq = frame.seq
+                        lastTransformSig = transformSig
+                        lastSlot = slot
+                    }
+
+                    yOv = PlaneOverride(slot.yBuf.duplicate().apply { rewind() }, dstW, 1)
+                    uOv = PlaneOverride(slot.uBuf.duplicate().apply { rewind() }, slot.cw, 1)
+                    vOv = PlaneOverride(slot.vBuf.duplicate().apply { rewind() }, slot.cw, 1)
+                }
             }
 
             ensurePlaneClassHooked(realPlanes[0].javaClass)
@@ -309,6 +354,31 @@ class VirtualCamHook : IXposedHookLoadPackage {
             planeOverrides[realPlanes[0]] = yOv
             planeOverrides[realPlanes[1]] = uOv
             planeOverrides[realPlanes[2]] = vOv
+        }
+
+        private fun computeTransformSig(
+            srcW: Int,
+            srcH: Int,
+            dstW: Int,
+            dstH: Int,
+            rotation: Int,
+            zoom: Float,
+            flipH: Boolean,
+            flipV: Boolean,
+            panX: Float,
+            panY: Float
+        ): Int {
+            var h = srcW
+            h = 31 * h + srcH
+            h = 31 * h + dstW
+            h = 31 * h + dstH
+            h = 31 * h + rotation
+            h = 31 * h + (zoom * 1000f).toInt()
+            h = 31 * h + (if (flipH) 1 else 0)
+            h = 31 * h + (if (flipV) 2 else 0)
+            h = 31 * h + (panX * 1000f).toInt()
+            h = 31 * h + (panY * 1000f).toInt()
+            return h
         }
     }
 
@@ -343,7 +413,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                                 bank = FaceWarpEngine.loadPoseBank(
                                     basePath = photoFile.absolutePath,
                                     poseDir = photoFile.parentFile,
-                                    maxDim = 420,
+                                    maxDim = 320,
                                     includeArgb = false
                                 )
                                 loadedVer = ctrl.assetVersion
@@ -360,7 +430,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                         }
 
                         try {
-                            Thread.sleep(40L) // ~25 fps smooth face animation
+                            Thread.sleep(32L) // ~30 fps smooth animation
                         } catch (_: InterruptedException) {
                             break
                         }
@@ -372,6 +442,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
                 }
             }, "ShizukuVCam-PhotoAnim").apply {
                 isDaemon = true
+                priority = Thread.NORM_PRIORITY + 1
                 start()
             }
         }
@@ -383,6 +454,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
         }
     }
 
+    // Zero-float-per-frame cached LUT transformer (eliminates camera thread lag)
     private class DirectYuvBuffers(val w: Int, val h: Int) {
         val cw: Int = (w + 1) / 2
         val ch: Int = (h + 1) / 2
@@ -395,6 +467,10 @@ class VirtualCamHook : IXposedHookLoadPackage {
         val uBuf: ByteBuffer = ByteBuffer.allocateDirect(cw * ch)
         val vBuf: ByteBuffer = ByteBuffer.allocateDirect(cw * ch)
 
+        private var cachedSig = 0
+        private var yLut = IntArray(w * h)
+        private var uvLut = IntArray(cw * ch)
+
         fun fillBlack() {
             yArr.fill(16.toByte())
             uArr.fill(128.toByte())
@@ -402,8 +478,9 @@ class VirtualCamHook : IXposedHookLoadPackage {
             commit()
         }
 
-        fun fillFromFrame(
+        fun fillFromFrameFast(
             src: YuvFrame,
+            sig: Int,
             rotation: Int,
             zoom: Float,
             flipH: Boolean,
@@ -411,12 +488,102 @@ class VirtualCamHook : IXposedHookLoadPackage {
             panX: Float,
             panY: Float
         ) {
-            transformPlane(src.y, src.width, src.height, yArr, w, h, rotation, zoom, flipH, flipV, panX, panY)
-            val srcCw = (src.width + 1) / 2
-            val srcCh = (src.height + 1) / 2
-            transformPlane(src.u, srcCw, srcCh, uArr, cw, ch, rotation, zoom, flipH, flipV, panX, panY)
-            transformPlane(src.v, srcCw, srcCh, vArr, cw, ch, rotation, zoom, flipH, flipV, panX, panY)
+            if (sig != cachedSig) {
+                rebuildLuts(src.width, src.height, rotation, zoom, flipH, flipV, panX, panY)
+                cachedSig = sig
+            }
+
+            val srcY = src.y
+            val lutY = yLut
+            val totalY = w * h
+            for (i in 0 until totalY) {
+                yArr[i] = srcY[lutY[i]]
+            }
+
+            val srcU = src.u
+            val srcV = src.v
+            val lutUv = uvLut
+            val totalUv = cw * ch
+            for (i in 0 until totalUv) {
+                val idx = lutUv[i]
+                uArr[i] = srcU[idx]
+                vArr[i] = srcV[idx]
+            }
+
             commit()
+        }
+
+        private fun rebuildLuts(
+            srcW: Int,
+            srcH: Int,
+            rotation: Int,
+            zoom: Float,
+            flipH: Boolean,
+            flipV: Boolean,
+            panX: Float,
+            panY: Float
+        ) {
+            if (srcW <= 0 || srcH <= 0) return
+            val maxSx = srcW - 1
+            val maxSy = srcH - 1
+            val invZoom = 1f / zoom.coerceIn(0.6f, 2.2f)
+            val invDstW = 1f / w
+            val invDstH = 1f / h
+
+            var pos = 0
+            for (y in 0 until h) {
+                val dv = y * invDstH
+                for (x in 0 until w) {
+                    val du = x * invDstW
+                    var su: Float
+                    var sv: Float
+                    when (rotation) {
+                        90 -> { su = dv; sv = 1f - du }
+                        180 -> { su = 1f - du; sv = 1f - dv }
+                        270 -> { su = 1f - dv; sv = du }
+                        else -> { su = du; sv = dv }
+                    }
+                    if (flipH) su = 1f - su
+                    if (flipV) sv = 1f - sv
+                    su = (su - 0.5f) * invZoom + 0.5f - panX
+                    sv = (sv - 0.5f) * invZoom + 0.5f - panY
+
+                    val sx = (su * srcW).toInt().coerceIn(0, maxSx)
+                    val sy = (sv * srcH).toInt().coerceIn(0, maxSy)
+                    yLut[pos++] = sy * srcW + sx
+                }
+            }
+
+            val srcCw = (srcW + 1) / 2
+            val srcCh = (srcH + 1) / 2
+            val maxScx = srcCw - 1
+            val maxScy = srcCh - 1
+            val invCw = 1f / cw
+            val invCh = 1f / ch
+
+            var cPos = 0
+            for (y in 0 until ch) {
+                val dv = y * invCh
+                for (x in 0 until cw) {
+                    val du = x * invCw
+                    var su: Float
+                    var sv: Float
+                    when (rotation) {
+                        90 -> { su = dv; sv = 1f - du }
+                        180 -> { su = 1f - du; sv = 1f - dv }
+                        270 -> { su = 1f - dv; sv = du }
+                        else -> { su = du; sv = dv }
+                    }
+                    if (flipH) su = 1f - su
+                    if (flipV) sv = 1f - sv
+                    su = (su - 0.5f) * invZoom + 0.5f - panX
+                    sv = (sv - 0.5f) * invZoom + 0.5f - panY
+
+                    val sx = (su * srcCw).toInt().coerceIn(0, maxScx)
+                    val sy = (sv * srcCh).toInt().coerceIn(0, maxScy)
+                    uvLut[cPos++] = sy * srcCw + sx
+                }
+            }
         }
 
         private fun commit() {
@@ -424,73 +591,12 @@ class VirtualCamHook : IXposedHookLoadPackage {
             uBuf.clear(); uBuf.put(uArr); uBuf.flip()
             vBuf.clear(); vBuf.put(vArr); vBuf.flip()
         }
-
-        private fun transformPlane(
-            src: ByteArray,
-            srcW: Int,
-            srcH: Int,
-            dst: ByteArray,
-            dstW: Int,
-            dstH: Int,
-            rotation: Int,
-            zoom: Float,
-            flipH: Boolean,
-            flipV: Boolean,
-            panX: Float,
-            panY: Float
-        ) {
-            if (srcW <= 0 || srcH <= 0 || dstW <= 0 || dstH <= 0) return
-            val maxSx = srcW - 1
-            val maxSy = srcH - 1
-            val invZoom = 1f / zoom.coerceIn(0.6f, 2.2f)
-            val invDstW = 1f / dstW
-            val invDstH = 1f / dstH
-            var dstPos = 0
-
-            for (y in 0 until dstH) {
-                val dv = y * invDstH
-                for (x in 0 until dstW) {
-                    val du = x * invDstW
-
-                    // Map destination sensor coordinate into upright source UV space
-                    var su: Float
-                    var sv: Float
-                    when (rotation) {
-                        90 -> {
-                            su = dv
-                            sv = 1f - du
-                        }
-                        180 -> {
-                            su = 1f - du
-                            sv = 1f - dv
-                        }
-                        270 -> {
-                            su = 1f - dv
-                            sv = du
-                        }
-                        else -> {
-                            su = du
-                            sv = dv
-                        }
-                    }
-
-                    if (flipH) su = 1f - su
-                    if (flipV) sv = 1f - sv
-
-                    su = (su - 0.5f) * invZoom + 0.5f - panX
-                    sv = (sv - 0.5f) * invZoom + 0.5f - panY
-
-                    val sx = (su * srcW).toInt().coerceIn(0, maxSx)
-                    val sy = (sv * srcH).toInt().coerceIn(0, maxSy)
-                    dst[dstPos++] = src[sy * srcW + sx]
-                }
-            }
-        }
     }
 
     private class YuvVideoDecoder(private val videoPath: String) {
         private val running = AtomicBoolean(false)
         private var worker: Thread? = null
+        private var frameCounter = 0L
 
         @Volatile
         var latestFrame: YuvFrame? = null
@@ -568,7 +674,11 @@ class VirtualCamHook : IXposedHookLoadPackage {
                                 val outImg = codec.getOutputImage(outIndex)
                                 if (outImg != null) {
                                     try {
-                                        extractI420Frame(outImg)?.let { latestFrame = it }
+                                        extractI420Frame(outImg)?.let { f ->
+                                            frameCounter++
+                                            f.seq = frameCounter
+                                            latestFrame = f
+                                        }
                                     } finally {
                                         outImg.close()
                                     }
@@ -616,7 +726,7 @@ class VirtualCamHook : IXposedHookLoadPackage {
             copyPlane(planes[0], left, top, w, h, yOut)
             copyPlane(planes[1], left / 2, top / 2, cw, ch, uOut)
             copyPlane(planes[2], left / 2, top / 2, cw, ch, vOut)
-            return YuvFrame(w, h, yOut, uOut, vOut)
+            return YuvFrame(w, h, yOut, uOut, vOut, 0L)
         }
 
         private fun copyPlane(

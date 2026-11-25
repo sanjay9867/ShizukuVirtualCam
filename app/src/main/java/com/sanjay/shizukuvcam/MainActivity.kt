@@ -3,9 +3,10 @@ package com.sanjay.shizukuvcam
 import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.Matrix
+import android.graphics.Color
 import android.graphics.PointF
 import android.media.FaceDetector
 import android.net.Uri
@@ -48,6 +49,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnZoomPlus: Button
     private lateinit var tvZoomValue: TextView
     private lateinit var faceDpad: FaceDpadView
+    private lateinit var btnAutoMove: Button
     private lateinit var btnBlink: Button
     private lateinit var btnSmile: Button
     private lateinit var btnIdleToggle: Button
@@ -87,7 +89,7 @@ class MainActivity : AppCompatActivity() {
         override fun run() {
             if (!isPreviewTicking) return
             renderPreviewFrame()
-            mainHandler.postDelayed(this, 45L)
+            mainHandler.postDelayed(this, 36L)
         }
     }
 
@@ -163,6 +165,7 @@ class MainActivity : AppCompatActivity() {
         btnZoomPlus = findViewById(R.id.btnZoomPlus)
         tvZoomValue = findViewById(R.id.tvZoomValue)
         faceDpad = findViewById(R.id.faceDpad)
+        btnAutoMove = findViewById(R.id.btnAutoMove)
         btnBlink = findViewById(R.id.btnBlink)
         btnSmile = findViewById(R.id.btnSmile)
         btnIdleToggle = findViewById(R.id.btnIdleToggle)
@@ -258,6 +261,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         faceDpad.onDirectionCommand = { zone, yaw, pitch ->
+            ShizukuBridge.state.autoSweep = false
             when (zone) {
                 FaceDpadView.Zone.CENTER -> {
                     ShizukuBridge.state.yaw = 0f
@@ -268,6 +272,16 @@ class MainActivity : AppCompatActivity() {
                     ShizukuBridge.state.yaw = yaw
                     ShizukuBridge.state.pitch = pitch
                 }
+            }
+            ShizukuBridge.pushControlState()
+        }
+
+        btnAutoMove.setOnClickListener {
+            val next = !ShizukuBridge.state.autoSweep
+            ShizukuBridge.state.autoSweep = next
+            if (!next) {
+                ShizukuBridge.state.yaw = 0f
+                ShizukuBridge.state.pitch = 0f
             }
             ShizukuBridge.pushControlState()
         }
@@ -378,7 +392,7 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.Main) {
                         reloadLocalPreviewBank()
                         btnGenerateAiPoses.isEnabled = true
-                        tvFeedStatus.text = "AI 3D Poses Ready! D-Pad now blends real neural head turns."
+                        tvFeedStatus.text = "AI 3D Poses Ready! D-Pad & Auto-Move now blend neural head turns."
                         Toast.makeText(this@MainActivity, "All 6 AI Neural Poses Deployed!", Toast.LENGTH_LONG).show()
                     }
                 } else {
@@ -401,7 +415,7 @@ class MainActivity : AppCompatActivity() {
                 ShizukuBridge.pushControlState()
                 withContext(Dispatchers.Main) {
                     reloadLocalPreviewBank()
-                    tvFeedStatus.text = "Cleared Cloud AI Poses (using real-time on-device 2.5D face engine)."
+                    tvFeedStatus.text = "Cleared Cloud AI Poses (using fast on-device 2.5D face engine)."
                 }
             }
         }
@@ -447,8 +461,7 @@ class MainActivity : AppCompatActivity() {
                 val rawBmp = inputStream.use { BitmapFactory.decodeStream(it) }
                     ?: throw IllegalStateException("Invalid image format")
 
-                // Normalize photo size (max 720px, even dimensions) for clean fast FaceDetector + YUV
-                val scale = minOf(720f / rawBmp.width, 720f / rawBmp.height, 1f)
+                val scale = minOf(640f / rawBmp.width, 640f / rawBmp.height, 1f)
                 val tw = ((rawBmp.width * scale).toInt() and 1.inv()).coerceAtLeast(128)
                 val th = ((rawBmp.height * scale).toInt() and 1.inv()).coerceAtLeast(128)
                 val cleanBmp = if (tw == rawBmp.width && th == rawBmp.height) {
@@ -457,23 +470,19 @@ class MainActivity : AppCompatActivity() {
                     Bitmap.createScaledBitmap(rawBmp, tw, th, true).also { rawBmp.recycle() }
                 }
 
-                // Auto-detect face & eyes using built-in Android FaceDetector
                 detectFaceLandmarks(cleanBmp)
 
-                // Save locally for live preview & Replicate AI Studio
                 val localPhoto = File(filesDir, "vcam_photo.jpg")
                 FileOutputStream(localPhoto).use { out ->
                     cleanBmp.compress(Bitmap.CompressFormat.JPEG, 92, out)
                 }
                 cleanBmp.recycle()
 
-                // Clear stale cloud poses from previous photo
                 for (spec in ReplicatePoseClient.DEFAULT_POSES) {
                     File(filesDir, spec.fileName).delete()
                 }
                 ShizukuBridge.service?.clearAiPoses(ShizukuBridge.activeTargetPackage)
 
-                // Deploy via Shizuku
                 val res = ShizukuBridge.deployLocalFileSync(localPhoto, "vcam_photo.jpg")
                 if (res == "OK") {
                     ShizukuBridge.state.mode = "photo"
@@ -488,7 +497,7 @@ class MainActivity : AppCompatActivity() {
                     if (res == "OK") {
                         reloadLocalPreviewBank()
                         syncUiFromState()
-                        tvFeedStatus.text = "Face Photo Deployed! Use D-Pad now or tap Sync for Brave."
+                        tvFeedStatus.text = "Face Photo Deployed! Use D-Pad / Auto-Move or tap Sync for Brave."
                         Toast.makeText(this@MainActivity, "Face Photo Live & Ready!", Toast.LENGTH_SHORT).show()
                     } else {
                         tvFeedStatus.text = "Deploy failed: $res"
@@ -570,7 +579,7 @@ class MainActivity : AppCompatActivity() {
         val bank = FaceWarpEngine.loadPoseBank(
             basePath = localPhoto.absolutePath,
             poseDir = filesDir,
-            maxDim = 320,
+            maxDim = 240,
             includeArgb = true
         )
         previewBank = bank
@@ -595,6 +604,13 @@ class MainActivity : AppCompatActivity() {
         isSyncingUi = true
         switchEnableVCam.isChecked = st.enabled
         tvZoomValue.text = String.format("%.1fx", st.zoom)
+        btnAutoMove.text = if (st.autoSweep) "Auto-Move: ON" else "Auto-Move: OFF"
+        btnAutoMove.backgroundTintList = ColorStateList.valueOf(
+            if (st.autoSweep) Color.parseColor("#1DB954") else Color.parseColor("#082418")
+        )
+        btnAutoMove.setTextColor(
+            if (st.autoSweep) Color.parseColor("#041F13") else Color.parseColor("#2EE87A")
+        )
         btnIdleToggle.text = if (st.autoIdle) "Idle: ON" else "Idle: OFF"
         btnSmile.text = if (st.smile > 0.3f) "Smile: ON" else "Smile"
         val presetIdx = flipPresets.indexOfFirst { (_, triple) ->

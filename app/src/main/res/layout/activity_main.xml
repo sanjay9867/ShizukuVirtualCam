@@ -47,7 +47,7 @@
         <!-- Live Animated Preview Frame -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
-            android:layout_height="270dp"
+            android:layout_height="260dp"
             android:layout_marginBottom="16dp"
             app:cardBackgroundColor="#082418"
             app:cardCornerRadius="20dp"
@@ -80,7 +80,7 @@ to activate Live Manual Mode"
             </FrameLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Flip + Zoom Control Row (Matches LiteCam Layout) -->
+        <!-- Flip + Zoom Control Row -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -182,36 +182,47 @@ Movement"
                     android:textColor="#FFFFFF"
                     android:textSize="20sp"
                     android:textStyle="bold"
-                    android:layout_marginBottom="10dp" />
+                    android:layout_marginBottom="8dp" />
+
+                <Button
+                    android:id="@+id/btnAutoMove"
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:backgroundTint="#082418"
+                    android:text="Auto-Move: OFF"
+                    android:textColor="#2EE87A"
+                    android:textSize="12sp"
+                    android:textStyle="bold"
+                    android:layout_marginBottom="5dp" />
 
                 <Button
                     android:id="@+id/btnBlink"
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
+                    android:layout_height="38dp"
                     android:backgroundTint="#082418"
                     android:text="Blink"
                     android:textColor="#2EE87A"
-                    android:textSize="13sp"
-                    android:layout_marginBottom="6dp" />
+                    android:textSize="12sp"
+                    android:layout_marginBottom="5dp" />
 
                 <Button
                     android:id="@+id/btnSmile"
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
+                    android:layout_height="38dp"
                     android:backgroundTint="#082418"
                     android:text="Smile"
                     android:textColor="#2EE87A"
-                    android:textSize="13sp"
-                    android:layout_marginBottom="6dp" />
+                    android:textSize="12sp"
+                    android:layout_marginBottom="5dp" />
 
                 <Button
                     android:id="@+id/btnIdleToggle"
                     android:layout_width="match_parent"
-                    android:layout_height="40dp"
+                    android:layout_height="38dp"
                     android:backgroundTint="#082418"
                     android:text="Idle: ON"
                     android:textColor="#D9F9E6"
-                    android:textSize="13sp" />
+                    android:textSize="12sp" />
             </LinearLayout>
 
             <com.sanjay.shizukuvcam.ui.FaceDpadView

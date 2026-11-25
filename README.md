@@ -1,7 +1,9 @@
-# ShizukuVirtualCam v2.0 (Manual Mode AI Live Face + Video Virtual Camera)
+# ShizukuVirtualCam v2.1 (Auto-Move + Low-Latency YUV Pipeline)
 
-## Features in v2.0
-- **LiteCam-Style Manual Mode UI**: Live preview box, Flip/Rotation selector, Zoom `−/+` controls, circular Face Movement D-Pad (`^ v < >` + Center Reset), Blink, Smile, and Auto-Idle natural breathing.
-- **Instant Face Photo Animation (Offline)**: Upload any portrait photo -> built-in Android `FaceDetector` locates the face and eyes -> real-time 2.5D head-turn warp, eyelid blink, smile, and breathing run live at ~25fps with zero API key needed.
-- **Built-in Cloud AI 3D Pose Studio (`fofr/expression-editor` on Replicate)**: Optionally paste a Replicate API token to synthesize 6 true neural 3D head poses (`Left / Right / Up / Down / Blink / Smile`) that blend smoothly when you tap the D-Pad.
-- **Floating Manual Menu Overlay**: Pop out a draggable green D-Pad + Zoom + Flip + Blink overlay directly on top of Brave or any patched app to steer the face live with zero restarts.
+## What Changed in v2.1
+- **One-Tap Auto-Move (`Auto: ON/OFF`)**: Added to both the floating overlay and the main Manual Mode panel to run a smooth, hands-free Left -> Right -> Up -> Down -> Center head sweep with automatic blinks. Tapping the D-Pad center reset or any direction immediately returns to manual control.
+- **10x Faster YUV Frame Pipeline (Lag Fix)**:
+  - Cached precomputed 1D rotation/flip/zoom lookup tables (`yLut`, `uvLut`) in `DirectYuvBuffers` so camera frame injection runs with zero per-pixel floating-point math.
+  - Added frame sequence deduplication (`lastRenderedSeq`) so repeated `getPlanes()` calls reuse the already-filled `DirectByteBuffer` in 0 ms.
+  - Replaced per-pixel `sampleMeshOffset()` and redundant chroma mesh interpolation in `FaceWarpEngine` with a single scanline fixed-point 16.16 `warpLut` and reusable `YuvFrame` buffers (zero GC stutter).
+  - Coalesced rapid D-Pad / overlay updates over Shizuku Binder (`AtomicReference` latest-wins queue).

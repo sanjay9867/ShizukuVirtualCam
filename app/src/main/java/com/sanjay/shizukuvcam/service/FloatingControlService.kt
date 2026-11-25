@@ -2,7 +2,9 @@ package com.sanjay.shizukuvcam.service
 
 import android.app.Service
 import android.content.Intent
+import android.graphics.Color
 import android.graphics.PixelFormat
+import android.content.res.ColorStateList
 import android.os.Build
 import android.os.IBinder
 import android.view.Gravity
@@ -23,12 +25,30 @@ class FloatingControlService : Service() {
     private var windowManager: WindowManager? = null
     private var rootView: View? = null
     private var isCollapsed = false
+    private var btnAutoMoveRef: Button? = null
+
+    private val stateObserver: () -> Unit = {
+        btnAutoMoveRef?.post { updateAutoMoveButtonUi() }
+    }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onCreate() {
         super.onCreate()
         showFloatingPanel()
+        ShizukuBridge.addStateListener(stateObserver)
+    }
+
+    private fun updateAutoMoveButtonUi() {
+        val btn = btnAutoMoveRef ?: return
+        val active = ShizukuBridge.state.autoSweep
+        btn.text = if (active) "Auto: ON" else "Auto: OFF"
+        btn.backgroundTintList = ColorStateList.valueOf(
+            if (active) Color.parseColor("#1DB954") else Color.parseColor("#082418")
+        )
+        btn.setTextColor(
+            if (active) Color.parseColor("#041F13") else Color.parseColor("#2EE87A")
+        )
     }
 
     private fun showFloatingPanel() {
@@ -66,7 +86,9 @@ class FloatingControlService : Service() {
         val btnZoomIn = view.findViewById<Button>(R.id.btnOverlayZoomIn)
         val btnFlip = view.findViewById<Button>(R.id.btnOverlayFlip)
         val btnBlink = view.findViewById<Button>(R.id.btnOverlayBlink)
-        val btnSmile = view.findViewById<Button>(R.id.btnOverlaySmile)
+        val btnAutoMove = view.findViewById<Button>(R.id.btnOverlayAutoMove)
+        btnAutoMoveRef = btnAutoMove
+        updateAutoMoveButtonUi()
 
         var startX = 0
         var startY = 0
@@ -103,6 +125,7 @@ class FloatingControlService : Service() {
         }
 
         dpad.onDirectionCommand = { zone, yaw, pitch ->
+            ShizukuBridge.state.autoSweep = false
             when (zone) {
                 FaceDpadView.Zone.CENTER -> {
                     ShizukuBridge.state.yaw = 0f
@@ -114,6 +137,7 @@ class FloatingControlService : Service() {
                     ShizukuBridge.state.pitch = pitch
                 }
             }
+            updateAutoMoveButtonUi()
             ShizukuBridge.pushControlState()
         }
 
@@ -137,8 +161,14 @@ class FloatingControlService : Service() {
             ShizukuBridge.pushControlState()
         }
 
-        btnSmile.setOnClickListener {
-            ShizukuBridge.state.smile = if (ShizukuBridge.state.smile > 0.3f) 0f else 0.85f
+        btnAutoMove.setOnClickListener {
+            val next = !ShizukuBridge.state.autoSweep
+            ShizukuBridge.state.autoSweep = next
+            if (!next) {
+                ShizukuBridge.state.yaw = 0f
+                ShizukuBridge.state.pitch = 0f
+            }
+            updateAutoMoveButtonUi()
             ShizukuBridge.pushControlState()
         }
 
@@ -147,6 +177,8 @@ class FloatingControlService : Service() {
 
     override fun onDestroy() {
         super.onDestroy()
+        ShizukuBridge.removeStateListener(stateObserver)
+        btnAutoMoveRef = null
         rootView?.let { v ->
             try {
                 windowManager?.removeView(v)

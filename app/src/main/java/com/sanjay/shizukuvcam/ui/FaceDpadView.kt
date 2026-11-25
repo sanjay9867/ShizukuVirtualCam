@@ -76,10 +76,8 @@ class FaceDpadView @JvmOverloads constructor(
         val outerR = min(width, height) / 2f - 6f
         val innerR = outerR * 0.30f
 
-        // Base dark circle
         canvas.drawCircle(cx, cy, outerR, bgPaint)
 
-        // Highlight pressed directional wedge
         if (activeZone != Zone.NONE && activeZone != Zone.CENTER) {
             val startAngle = when (activeZone) {
                 Zone.RIGHT -> -45f
@@ -100,13 +98,11 @@ class FaceDpadView @JvmOverloads constructor(
             )
         }
 
-        // Diagonal quadrant lines (matching LiteCam D-pad)
         val d = outerR * 0.7071f
         canvas.drawLine(cx - d, cy - d, cx + d, cy + d, dividerPaint)
         canvas.drawLine(cx + d, cy - d, cx - d, cy + d, dividerPaint)
         canvas.drawCircle(cx, cy, outerR, ringPaint)
 
-        // Directional chevron arrows
         val arrowDist = outerR * 0.66f
         val arrowSize = outerR * 0.12f
         drawChevron(canvas, cx, cy - arrowDist, arrowSize, Zone.UP)
@@ -114,7 +110,6 @@ class FaceDpadView @JvmOverloads constructor(
         drawChevron(canvas, cx - arrowDist, cy, arrowSize, Zone.LEFT)
         drawChevron(canvas, cx + arrowDist, cy, arrowSize, Zone.RIGHT)
 
-        // Center emerald reset / joystick circle
         centerCirclePaint.color = if (activeZone == Zone.CENTER) {
             Color.parseColor("#2EE87A")
         } else {
@@ -123,7 +118,6 @@ class FaceDpadView @JvmOverloads constructor(
         canvas.drawCircle(cx, cy, innerR, centerCirclePaint)
         canvas.drawCircle(cx, cy, innerR, centerRingPaint)
 
-        // Mini joystick glyph in center
         val jR = innerR * 0.22f
         canvas.drawLine(cx - innerR * 0.34f, cy + innerR * 0.28f, cx + innerR * 0.34f, cy + innerR * 0.28f, iconStrokePaint)
         canvas.drawLine(cx, cy + innerR * 0.28f, cx, cy - innerR * 0.14f, iconStrokePaint)
