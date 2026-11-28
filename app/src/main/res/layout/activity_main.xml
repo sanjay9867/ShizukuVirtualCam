@@ -73,8 +73,7 @@
                     android:layout_gravity="center"
                     android:gravity="center"
                     android:padding="16dp"
-                    android:text="Upload a Face Photo below
-100% Offline 6D Depth-Relief Engine"
+                    android:text="Upload a Face Photo below\n100% Offline 6D Depth-Relief Engine"
                     android:textColor="#A8DFC2"
                     android:textSize="14sp" />
             </FrameLayout>
@@ -242,6 +241,7 @@
                         android:layout_width="0dp"
                         android:layout_height="36dp"
                         android:layout_weight="1"
+                        android:layout_marginStart="4dp"
                         android:backgroundTint="#082418"
                         android:padding="0dp"
                         android:text="Smile"
@@ -396,6 +396,12 @@
                     android:text="Upload MP4 Video"
                     android:textColor="#2EE87A" />
             </LinearLayout>
+
+            <com.sanjay.shizukuvcam.RealVirtualToggleButton
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_marginTop="10dp"
+                android:contentDescription="Toggle between real camera and virtual camera feed" />
 
             <com.google.android.material.materialswitch.MaterialSwitch
                 android:id="@+id/switchEnableVCam"
